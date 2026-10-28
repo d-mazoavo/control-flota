@@ -18,9 +18,11 @@ rules_version = '2';
 //                            cédula) y sus fotografías; ve únicamente sus registros, su
 //                            ficha y los datos de los vehículos. No ve datos de otras personas.
 //
-//  Ninguna colección permite borrar registros: el Administrador los ANULA (quedan con
-//  motivo, autor y fecha). Toda escritura exige su asiento en la bitácora de auditoría
-//  dentro de la misma operación, y la hora y el autor los fija el servidor.
+//  Solo el Administrador modifica, anula y ELIMINA. Toda eliminación exige, en la misma
+//  operación, un asiento en la bitácora con la copia completa del registro y un aviso en
+//  "eliminados" para que los demás equipos lo retiren de su copia local. Toda escritura
+//  exige su asiento en la bitácora, y la hora y el autor los fija el servidor.
+//  La bitácora no se puede modificar ni borrar, ni siquiera por el Administrador.
 // =============================================================================
 
 service cloud.firestore {
@@ -75,6 +77,14 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/auditoria/$(d()._aud)).data.ref == col + '/' + id;
     }
     function crea(col, id) { return selloCreacion() && marcado(col) && auditado(col, id); }
+    // Eliminación definitiva: solo el Administrador, con asiento en bitácora y aviso de eliminación
+    // en la misma operación (identificador determinado por la colección, el registro y su fecha de creación).
+    function idBorrado(col, id) { return 'del_' + col + '_' + id + '_' + string(resource.data._creado.toMillis()); }
+    function borrado(col, id) {
+      return esAdmin()
+        && existsAfter(/databases/$(database)/documents/auditoria/$(idBorrado(col, id)))
+        && existsAfter(/databases/$(database)/documents/eliminados/$(idBorrado(col, id)));
+    }
     function modifica(col, id) { return selloModificacion() && marcado(col) && auditado(col, id); }
 
     function numOpc(k) { return !(k in d()) || d()[k] == null || d()[k] is number; }
@@ -134,24 +144,32 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ======================= AVISOS DE ELIMINACIÓN (sincronización) =======================
+    match /eliminados/{id} {
+      allow get: if false;
+      allow list: if lector() || (esConductor() && resource.data.publico == true);
+      allow create: if esAdmin() && d()._mod == request.time && d().col is string && d().docId is string && d().publico is bool;
+      allow update, delete: if false;
+    }
+
     // ======================= MAESTROS (solo Administrador) =======================
     match /razones/{id} {
       allow read: if basico();
       allow create: if esAdmin() && crea('razones', id);
       allow update: if esAdmin() && modifica('razones', id);
-      allow delete: if false;
+      allow delete: if borrado('razones', id);
     }
     match /centros/{id} {
       allow read: if basico();
       allow create: if esAdmin() && crea('centros', id);
       allow update: if esAdmin() && modifica('centros', id);
-      allow delete: if false;
+      allow delete: if borrado('centros', id);
     }
     match /personas/{cedula} {
       allow read: if lector() || propio();
       allow create: if esAdmin() && crea('personas', cedula) && d().cedula == cedula;
       allow update: if esAdmin() && modifica('personas', cedula) && d().cedula == cedula;
-      allow delete: if false;
+      allow delete: if borrado('personas', cedula);
     }
     match /vehiculos/{placa} {
       allow read: if basico();
@@ -163,19 +181,19 @@ service cloud.firestore {
         || (ingresa() && modifica('vehiculos', placa)
             && d().diff(resource.data).affectedKeys().hasOnly(['odometroUltimo', 'odometroFecha', '_mod', '_modPor', '_modPorUsuario', '_aud'])
             && d().odometroUltimo is number && d().odometroUltimo >= 0);
-      allow delete: if false;
+      allow delete: if borrado('vehiculos', placa);
     }
     match /asignaciones/{id} {
       allow read: if lector();
       allow create: if esAdmin() && crea('asignaciones', id);
       allow update: if esAdmin() && modifica('asignaciones', id);
-      allow delete: if false;
+      allow delete: if borrado('asignaciones', id);
     }
     match /picoyplaca/{id} {
       allow read: if basico();
       allow create: if esAdmin() && crea('picoyplaca', id);
       allow update: if esAdmin() && modifica('picoyplaca', id);
-      allow delete: if false;
+      allow delete: if borrado('picoyplaca', id);
     }
 
     // ======================= REGISTROS (Analista ingresa; Administrador modifica o anula) =======================
@@ -186,20 +204,20 @@ service cloud.firestore {
         && d().precioGalon is number && d().precioGalon >= 0 && noNeg('odometro');
       allow update: if esAdmin() && modifica('tanqueos', id)
         && d().galones is number && d().galones > 0 && d().precioGalon is number && noNeg('odometro');
-      allow delete: if false;
+      allow delete: if borrado('tanqueos', id);
     }
     match /mantenimientos/{id} {
       allow read: if lector();
       allow create: if escritor() && crea('mantenimientos', id) && d().anulado == false
         && noNeg('valorTotal') && noNeg('odometro');
       allow update: if esAdmin() && modifica('mantenimientos', id) && noNeg('valorTotal') && noNeg('odometro');
-      allow delete: if false;
+      allow delete: if borrado('mantenimientos', id);
     }
     match /documentos/{id} {
       allow read: if basico();
       allow create: if escritor() && crea('documentos', id) && d().anulado == false && noNeg('valor');
       allow update: if esAdmin() && modifica('documentos', id) && noNeg('valor');
-      allow delete: if false;
+      allow delete: if borrado('documentos', id);
     }
     // Uso diario: el Analista lo abre (recibe el vehículo) y lo cierra (entrega) una sola vez.
     match /recorridos/{id} {
@@ -215,7 +233,7 @@ service cloud.firestore {
             && d().diff(resource.data).affectedKeys().hasOnly([
                  'estado', 'kmEntrega', 'kmRecorridos', 'fechaEntrega', 'combustibleEntrega',
                  'novedadesEntrega', 'entregadoA', '_mod', '_modPor', '_modPorUsuario', '_aud']));
-      allow delete: if false;
+      allow delete: if borrado('recorridos', id);
     }
 
     // ======================= FOTOGRAFÍAS =======================
@@ -226,14 +244,33 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/$(d().ref.split('/')[0])/$(d().ref.split('/')[1])).data.cedula == miCedula();
     }
     // Se consultan por demanda (no se sincronizan). Máximo ~900 KB por fotografía ya reducida.
+    // Imágenes: el contenido va en "data" (reducido, < 900 KB).
+    // Documentos (PDF y otros, hasta 8 MB): "data" vacío y el contenido en fotos/{id}/partes/{n};
+    // el registro nace con completo == false y quien lo creó lo marca completo al terminar la carga.
     match /fotos/{id} {
       allow read: if lector() || (esConductor() && resource.data._creadoPor == request.auth.uid);
       allow create: if (escritor() || (esConductor() && fotoPropia()))
         && d()._creado == request.time && d()._creadoPor == request.auth.uid
         && d()._creadoPorUsuario == cuenta().usuario
-        && d().ref is string && d().data is string && d().data.size() < 900000;
-      allow update: if false;
-      allow delete: if esAdmin();
+        && d().ref is string && d().data is string && d().data.size() < 900000
+        && (!('partes' in d()) || (d().partes is int && d().partes >= 1 && d().partes <= 20 && d().completo == false));
+      allow update: if (esAdmin() && d()._mod == request.time && d()._modPor == request.auth.uid
+            && d().diff(resource.data).affectedKeys().hasOnly(['tipo', 'descripcion', 'ref', '_mod', '_modPor', '_modPorUsuario']))
+        || (resource.data._creadoPor == request.auth.uid && resource.data.get('completo', true) == false
+            && d().diff(resource.data).affectedKeys().hasOnly(['completo']) && d().completo == true);
+      allow delete: if esAdmin()
+        && existsAfter(/databases/$(database)/documents/auditoria/$(idBorrado('fotos', id)));
+
+      match /partes/{n} {
+        allow read: if lector()
+          || (esConductor() && get(/databases/$(database)/documents/fotos/$(id)).data._creadoPor == request.auth.uid);
+        allow create: if ingresa()
+          && get(/databases/$(database)/documents/fotos/$(id)).data._creadoPor == request.auth.uid
+          && get(/databases/$(database)/documents/fotos/$(id)).data.get('completo', true) == false
+          && request.resource.data.data is string && request.resource.data.data.size() < 900000;
+        allow update: if false;
+        allow delete: if esAdmin();
+      }
     }
 
     // Todo lo demás queda cerrado.

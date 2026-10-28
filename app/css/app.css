@@ -233,6 +233,16 @@ textarea.campo-input { resize: vertical; }
 .angulo-img.vacia { border-style: dashed; color: var(--muted); font-size: .8rem; }
 .angulo-img img { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; display: block; }
 
+/* ---------- Archivos (documentos) ---------- */
+.doc-vista { width: 100%; height: 140px; border-radius: 8px; border: 1px solid var(--line); background: var(--hover); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: pointer; padding: 10px; font: inherit; color: var(--ink); }
+.doc-vista:hover { background: var(--brand-l); }
+.doc-ext { font-weight: 800; font-size: 1.1rem; color: #fff; background: var(--deny); border-radius: 6px; padding: 6px 10px; letter-spacing: .04em; }
+.doc-nombre { font-size: .8rem; color: var(--ink-2); text-align: center; overflow-wrap: anywhere; max-height: 3.6em; overflow: hidden; }
+.foto.incompleto .doc-vista { border-color: var(--deny); }
+.foto figcaption .fila { margin-top: 4px; }
+.mini.persona { width: 40px; height: 40px; border-radius: 50%; }
+.btn.peligro-t { color: var(--deny); }
+
 /* ---------- Avisos de tanqueo ---------- */
 .aviso-canal { padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; }
 .btn.whatsapp { background: #1f7a4d; border-color: #1f7a4d; color: #fff; }

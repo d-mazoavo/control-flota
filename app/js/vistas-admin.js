@@ -5,7 +5,19 @@
   var U = FL.U, h = U.h, UI = FL.UI, V = FL.Vistas, App = FL.App, C = FL.Calc;
   var TODOS = ['Administrador', 'Analista', 'Gobierno Corporativo'];
 
-  function botonEditar(col, r) { return V.esAdmin() ? h('button', { class: 'btn xs', type: 'button', onclick: function () { V.editarMaestro(col, r); } }, 'Editar') : null; }
+  function botonEditar(col, r, extra) { return V.accionesMaestro(col, r, extra); }
+  var TIPOS_PERSONA = ['Fotografía de la persona', 'Cédula de ciudadanía', 'Licencia de conducción', 'Certificado o curso', 'Autorización de tratamiento de datos', 'Otro documento'];
+  // Archivos de la persona: fotografía, cédula, licencias y demás documentos
+  V.archivosPersona = function (p) {
+    UI.modal({ titulo: 'Archivos de ' + p.nombres, ancho: true, cuerpo: h('div', { class: 'pila' },
+      h('p', { class: 'muted small' }, 'C. C. ' + p.cedula + (p.cargo ? ' · ' + p.cargo : '') + '. Cargue fotos o documentos (PDF, Word, Excel). La fotografía de la persona puede usarse como foto de su ficha.'),
+      V.galeria('personas/' + p.cedula, { tipos: TIPOS_PERSONA, soloEscritor: true,
+        principal: async function (f) {
+          var mini = await U.miniatura(f.data, 240);
+          await FL.Datos.modificar('personas', p.cedula, { miniatura: mini }, 'Foto de ' + p.nombres);
+          UI.toast('Foto de la persona actualizada.', 'ok'); App.refrescar();
+        } })) });
+  };
   function botonNuevoMaestro(col, texto) { return V.esAdmin() ? h('button', { class: 'btn primario', type: 'button', onclick: function () { V.editarMaestro(col, null); } }, texto) : null; }
   var filtroActivo = { l: 'Estado', opts: [['1', 'Activos'], ['0', 'Inactivos']], def: '1', fn: function (r, v) { return (r.activo !== false) === (v === '1'); } };
 
@@ -22,11 +34,12 @@
       return h('span', { class: 'fila gap wrap' }, l.map(function (x) { var dd = x.vence ? U.diasHasta(x.vence) : null; return UI.chip(x.categoria + ' · ' + (x.vence ? U.fFecha(x.vence) : 'sin fecha'), dd == null || dd < 0 ? 'mal' : dd <= (App.param().diasAlerta || 30) ? 'alerta' : 'bien'); }));
     };
     cols.push({ l: 'Estado de licencias', v: function (r) { return r.conductor ? FL.Calc.estadoLicencias(r, App.param().diasAlerta).estado : ''; }, f: function (r) { return r.conductor ? UI.chipEstado(FL.Calc.estadoLicencias(r, App.param().diasAlerta).estado) : '—'; } });
+    cols.unshift({ l: 'Foto', v: function () { return ''; }, f: function (r) { return r.miniatura ? h('img', { src: r.miniatura, alt: '', class: 'mini persona' }) : h('span', { class: 'mini vacia persona' }, '👤'); } });
     cont.appendChild(h('section', { class: 'tarjeta' }, UI.tabla({
-      nombre: 'Personas', columnas: cols, filas: function () { return FL.Datos.lista('personas'); }, ordenInicial: 1, ordenDesc: false,
+      nombre: 'Personas', columnas: cols, filas: function () { return FL.Datos.lista('personas'); }, ordenInicial: 2, ordenDesc: false,
       filtros: [filtroActivo, { l: 'Conductores', opts: [['1', 'Solo autorizados para conducir']], fn: function (r) { return !!r.conductor; } },
         { l: 'Razón social', opts: FL.Datos.lista('razones').map(function (x) { return [x.id, x.nombre]; }), fn: function (r, v) { return r.razonId === v; } }],
-      acciones: function (r) { return botonEditar('personas', r); }
+      acciones: function (r) { return botonEditar('personas', r, [h('button', { class: 'btn xs', type: 'button', onclick: function () { V.archivosPersona(r); } }, '📎 Archivos')]); }
     })));
   }, TODOS);
 
@@ -65,7 +78,7 @@
     var zona = h('div', null, h('p', { class: 'muted' }, 'Cargando usuarios…'));
     cont.appendChild(V.titulo('Usuarios', 'Cada usuario se crea a partir de una persona registrada e ingresa con su propio usuario y contraseña.', [h('button', { class: 'btn primario', type: 'button', onclick: function () { formUsuario(null); } }, '+ Nuevo usuario')]));
     cont.appendChild(h('div', { class: 'tarjeta pila sm' },
-      h('p', null, h('strong', null, 'Administrador: '), 'crea, modifica y anula todo; administra usuarios y parámetros.'),
+      h('p', null, h('strong', null, 'Administrador: '), 'crea, modifica, anula y elimina todo, carga y quita archivos, corrige cédulas y placas; administra usuarios y parámetros.'),
       h('p', null, h('strong', null, 'Analista: '), 'ingresa tanqueos, uso diario, mantenimientos, documentos y fotografías. Consulta todo. No modifica ni anula.'),
       h('p', null, h('strong', null, 'Gobierno Corporativo: '), 'consulta, filtra y descarga todo, incluida la bitácora. No ingresa, no modifica, no borra.'),
       h('p', null, h('strong', null, 'Conductor: '), 'registra solo sus propios tanqueos y usos de vehículos (su cédula queda fija) y sus fotografías; ve únicamente sus registros, sus licencias y los vehículos a su cargo. No ve datos de otras personas.')));
@@ -255,7 +268,9 @@
       'Registre cada SOAT, revisión técnico-mecánica, póliza, impuesto o autorización de blindaje con su vencimiento. En cada renovación se ingresa un registro nuevo: la aplicación toma el de vencimiento más reciente y alerta con la anticipación definida en Parámetros.'
     ]));
     cont.appendChild(sec('5. Correcciones', [
-      'El Analista no puede modificar ni anular. Si se ingresó un dato errado, debe informarlo al Administrador, quien lo corrige («Editar») o lo anula con un motivo. Nada se borra: el registro anulado deja de sumar, pero permanece con su motivo, autor y fecha, y la bitácora conserva el valor anterior y el nuevo de toda modificación.'
+      'El Analista no puede modificar, anular ni eliminar. Si se ingresó un dato errado, debe informarlo al Administrador, quien puede: editarlo («Editar», también los anulados), anularlo con un motivo (deja de sumar y se puede reactivar) o eliminarlo definitivamente («Eliminar»). Toda modificación queda en la bitácora con el valor anterior y el nuevo, y toda eliminación con una copia completa del registro, el motivo, quién la hizo y cuándo; la bitácora no se puede alterar.',
+      'Una persona, vehículo, centro de costo o razón social que tenga registros asociados no se puede eliminar (quedarían registros sin dueño): primero se eliminan o reasignan esos registros, o se marca como inactivo o dado de baja. Si una cédula o una placa quedó mal escrita, use «Corregir cédula» o «Corregir placa» en la ventana de edición: se trasladan todos sus registros, archivos y usuario.',
+      'Archivos: en cada persona («📎 Archivos»), vehículo (pestaña Fotos y documentos), documento, tanqueo, uso diario y mantenimiento («Archivos») se pueden cargar fotos y documentos PDF, Word o Excel de hasta 8 MB. El Administrador puede cambiar su tipo y descripción, descargarlos y eliminarlos.'
     ]));
     cont.appendChild(sec('6. Consultas y descargas', [
       'Todas las tablas permiten buscar, filtrar por año, mes, vehículo, centro de costo y razón social, ordenar por cualquier columna y descargar en Excel lo que se está viendo. En Costos y reportes se descarga el reporte completo del año o la base completa. Cada vehículo tiene su hoja de vida en PDF. Toda descarga queda en la bitácora con la huella SHA-256 del archivo.'

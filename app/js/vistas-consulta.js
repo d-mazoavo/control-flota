@@ -173,7 +173,10 @@
     var acciones = [V.selectorAnio(anio, function (a) { V.anio = a; App.refrescar(); }),
       h('button', { class: 'btn', type: 'button', onclick: function () { FL.Exportar.hojaDeVida(v.placa, anio).catch(function (e) { UI.toast(e.message, 'error'); }); } }, '⬇ PDF hoja de vida'),
       h('button', { class: 'btn', type: 'button', onclick: function () { exportarVehiculo(v); } }, '⬇ Excel')];
-    if (V.esAdmin()) acciones.push(h('button', { class: 'btn primario', type: 'button', onclick: function () { V.editarMaestro('vehiculos', v); } }, 'Editar datos'));
+    if (V.esAdmin()) {
+      acciones.push(h('button', { class: 'btn primario', type: 'button', onclick: function () { V.editarMaestro('vehiculos', v); } }, 'Editar datos'));
+      acciones.push(h('button', { class: 'btn peligro-t', type: 'button', onclick: function () { V.eliminar('vehiculos', v, function () { App.ir('/vehiculos'); }); } }, 'Eliminar vehículo'));
+    }
     cont.appendChild(h('a', { class: 'enlace small', href: '#/vehiculos' }, '← Vehículos'));
     cont.appendChild(V.titulo('Hoja de vida · ' + v.placa, [v.tipo, v.marca, v.linea, v.modelo, v.color].filter(Boolean).join(' · '), acciones));
 
@@ -189,7 +192,7 @@
           ['Rendimiento', rend.promedio ? U.n(rend.promedio, 1) + ' km/gal promedio' + (v.rendimientoRef ? ' (referencia ' + U.n(v.rendimientoRef, 1) + ')' : '') : 'Sin tramos completos']
         ]))));
 
-    var tabs = [['resumen', 'Resumen ' + anio], ['datos', 'Datos'], ['combustible', 'Combustible'], ['uso', 'Uso diario'], ['mant', 'Mantenimientos'], ['docs', 'Documentos'], ['asig', 'Asignaciones'], ['fotos', 'Fotografías']];
+    var tabs = [['resumen', 'Resumen ' + anio], ['datos', 'Datos'], ['combustible', 'Combustible'], ['uso', 'Uso diario'], ['mant', 'Mantenimientos'], ['docs', 'Documentos'], ['asig', 'Asignaciones'], ['fotos', 'Fotos y documentos']];
     var barra = h('div', { class: 'pestanas', role: 'tablist' }), panel = h('div', { class: 'pila' });
     tabs.forEach(function (t) {
       barra.appendChild(h('button', { class: 'pestana' + (pestanaHV === t[0] ? ' activa' : ''), role: 'tab', type: 'button', onclick: function () { pestanaHV = t[0]; Array.from(barra.children).forEach(function (b, i) { b.classList.toggle('activa', tabs[i][0] === pestanaHV); }); pintar(); } }, t[1]));
@@ -245,17 +248,18 @@
         panel.appendChild(UI.seccion('Historial de documentos', tablaDocs(function () { return FL.Datos.lista('documentos').filter(function (x) { return x.placa === v.placa; }); })));
       } else if (pestanaHV === 'asig') {
         panel.appendChild(UI.seccion('Historial de asignación del vehículo', UI.tabla({
-          columnas: [{ l: 'Responsable', v: function (a) { return a.nombre; } }, { l: 'Cédula', v: function (a) { return a.cedula; } }, { l: 'Desde', v: function (a) { return a.desde; }, tipo: 'fechahora' }, { l: 'Hasta', v: function (a) { return a.hasta || 'Vigente'; } }, { l: 'Registró', v: function (a) { return a._creadoPorUsuario; } }],
-          filas: C.vigentes(d.asignaciones).filter(function (a) { return a.placa === v.placa; }), ordenInicial: 2, vacio: 'Sin asignaciones. Se registran al asignar un responsable en los datos del vehículo.'
-        })));
+          columnas: [{ l: 'Responsable', v: function (a) { return a.nombre; } }, { l: 'Cédula', v: function (a) { return a.cedula; } }, { l: 'Desde', v: function (a) { return a.desde; }, tipo: 'fechahora' }, { l: 'Hasta', v: function (a) { return a.hasta || 'Vigente'; } }, { l: 'Observaciones', v: function (a) { return a.observaciones; } }, { l: 'Registró', v: function (a) { return a._creadoPorUsuario; } }],
+          filas: C.vigentes(d.asignaciones).filter(function (a) { return a.placa === v.placa; }), ordenInicial: 2, vacio: 'Sin asignaciones. Se registran al asignar un responsable en los datos del vehículo.',
+          acciones: V.esAdmin() ? function (a) { return h('div', { class: 'fila gap' }, h('button', { class: 'btn xs', type: 'button', onclick: function () { editarAsignacion(v, a); } }, 'Editar'), V.botonEliminar('asignaciones', a)); } : null
+        }), V.esAdmin() ? [h('button', { class: 'btn sm', type: 'button', onclick: function () { editarAsignacion(v, null); } }, '+ Agregar asignación')] : null));
         var conductores = U.agrupar(C.vigentes(d.recorridos).filter(function (x) { return x.placa === v.placa; }), function (x) { return x.cedula; });
         panel.appendChild(UI.seccion('Quiénes lo han conducido (uso diario)', UI.tabla({
           columnas: [{ l: 'Conductor', v: function (x) { return x.nombre; } }, { l: 'Cédula', v: function (x) { return x.cedula; } }, { l: 'Usos', v: function (x) { return x.n; }, tipo: 'num' }, { l: 'Km', v: function (x) { return x.km; }, tipo: 'num' }, { l: 'Último uso', v: function (x) { return x.ult; }, tipo: 'fechahora' }],
           filas: Object.keys(conductores).map(function (c) { var l = conductores[c]; return { cedula: c, nombre: l[0].personaNombre, n: l.length, km: U.sum(l, function (x) { return x.kmRecorridos; }), ult: l.map(function (x) { return x.fechaRecibe; }).sort().pop() }; }), ordenInicial: 3
         })));
       } else if (pestanaHV === 'fotos') {
-        panel.appendChild(UI.seccion('Fotografías del vehículo', V.galeria('vehiculos/' + v.placa, {
-          tipos: ['Frente', 'Costado izquierdo', 'Costado derecho', 'Posterior', 'Interior', 'Odómetro', 'Daño o novedad', 'Documento', 'Otra'],
+        panel.appendChild(UI.seccion('Fotos y documentos del vehículo', V.galeria('vehiculos/' + v.placa, {
+          tipos: ['Frente', 'Costado izquierdo', 'Costado derecho', 'Posterior', 'Interior', 'Odómetro', 'Daño o novedad', 'Licencia de tránsito (tarjeta de propiedad)', 'SOAT', 'Revisión técnico-mecánica', 'Póliza', 'Factura de compra', 'Certificado de blindaje', 'Improntas', 'Otro documento'],
           principal: async function (f) {
             await V.ponerMiniatura(v.placa, f.data);
             UI.toast('Foto principal actualizada.', 'ok'); App.refrescar();
@@ -298,7 +302,7 @@
         .concat(sinVehiculo ? [] : [{ l: 'Vehículo', opts: opcVehiculos(), fn: function (r, v) { return r.placa === v; } }])
         .concat([{ l: 'Centro de costo', opts: opcCentros(), fn: function (r, v) { return r.centroId === v; } }, { l: 'Razón social', opts: opcRazones(), fn: function (r, v) { return r.razonId === v; } }, filtroAnulados]),
       acciones: function (r) {
-        var extra = [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('tanqueos', r); } }, 'Soportes')];
+        var extra = [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('tanqueos', r); } }, '📎 Archivos')];
         if (!r.anulado && V.puedeIngresar()) extra.push(h('button', { class: 'btn xs', type: 'button', onclick: function () { UI.modal({ titulo: 'Aviso del tanqueo', ancho: true, cuerpo: FL.Notif.panel(r.id, false) }); } }, 'Avisar'));
         return V.accionesRegistro('tanqueos', r, extra);
       }
@@ -315,7 +319,7 @@
       filtros: [filtroAnio('recorridos', 'fechaRecibe'), filtroMes('fechaRecibe'), { l: 'Estado', opts: [['Abierto', 'Abiertos'], ['Cerrado', 'Cerrados']], fn: function (r, v) { return r.estado === v; } },
         { l: 'Vehículo', opts: opcVehiculos(), fn: function (r, v) { return r.placa === v; } }, filtroAnulados],
       acciones: function (r) {
-        var extra = [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('recorridos', r); } }, 'Fotos')];
+        var extra = [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('recorridos', r); } }, '📎 Archivos')];
         if (r.estado === 'Abierto' && !r.anulado && V.puedeIngresar()) extra.unshift(h('button', { class: 'btn xs primario', type: 'button', onclick: function () { V.registrarEntrega(r); } }, 'Entregar'));
         return V.accionesRegistro('recorridos', r, extra);
       }
@@ -330,7 +334,7 @@
       nombre: 'Mantenimientos', columnas: cols, filas: filas, ordenInicial: 0,
       filtros: [filtroAnio('mantenimientos', 'fecha'), filtroMes('fecha'), { l: 'Tipo', opts: FL.OPC.tiposMantenimiento.map(function (t) { return [t, t]; }), fn: function (r, v) { return r.tipo === v; } },
         { l: 'Vehículo', opts: opcVehiculos(), fn: function (r, v) { return r.placa === v; } }, filtroAnulados],
-      acciones: function (r) { return V.accionesRegistro('mantenimientos', r, [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('mantenimientos', r); } }, 'Soportes')]); }
+      acciones: function (r) { return V.accionesRegistro('mantenimientos', r, [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('mantenimientos', r); } }, '📎 Archivos')]); }
     });
   }
   function tablaDocs(filas) {
@@ -340,15 +344,44 @@
     return UI.tabla({
       nombre: 'Documentos', columnas: cols, filas: filas, ordenInicial: 4,
       filtros: [{ l: 'Documento', opts: FL.OPC.tiposDocumento.map(function (t) { return [t, t]; }), fn: function (r, v) { return r.tipo === v; } }, { l: 'Vehículo', opts: opcVehiculos(), fn: function (r, v) { return r.placa === v; } }, filtroAnulados],
-      acciones: function (r) { return V.accionesRegistro('documentos', r, [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('documentos', r); } }, 'Soportes')]); }
+      acciones: function (r) { return V.accionesRegistro('documentos', r, [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('documentos', r); } }, '📎 Archivos')]); }
     });
   }
+  // Asignación de responsable (el Administrador puede agregar el historial anterior, corregirlo o eliminarlo)
+  function editarAsignacion(v, a) {
+    var ced = h('input', { class: 'campo-input', list: 'dl-asig', inputmode: 'numeric', autocomplete: 'off', value: a ? a.cedula : '' });
+    var dl = h('datalist', { id: 'dl-asig' }, FL.Datos.lista('personas').map(function (p) { return h('option', { value: p.cedula }, p.nombres); }));
+    var desde = h('input', { class: 'campo-input', type: 'datetime-local', value: a ? (a.desde || '') : '' });
+    var hasta = h('input', { class: 'campo-input', type: 'datetime-local', value: a ? (a.hasta || '') : '' });
+    var obs = h('textarea', { class: 'campo-input', rows: 2 }); obs.value = a ? (a.observaciones || '') : '';
+    var err = h('p', { class: 'txt-error small' });
+    function f(l, el, ay) { return h('label', { class: 'campo' }, h('span', { class: 'campo-l' }, l), el, ay ? h('span', { class: 'campo-ayuda' }, ay) : null); }
+    UI.modal({ titulo: (a ? 'Editar' : 'Agregar') + ' asignación · ' + v.placa, cuerpo: h('div', { class: 'pila' }, f('Responsable (cédula)', ced), dl, f('Desde', desde), f('Hasta', hasta, 'Vacío si sigue vigente.'), f('Observaciones', obs),
+      h('p', { class: 'muted small' }, 'Este historial no cambia el responsable actual del vehículo; para eso use «Editar datos».'), err),
+      acciones: [{ l: 'Cancelar' }, { l: 'Guardar', tipo: 'primario', fn: async function () {
+        var c = U.normCedula(ced.value), p = FL.Datos.uno('personas', c);
+        if (!p) { err.textContent = 'Cédula no registrada.'; return false; }
+        if (!desde.value) { err.textContent = 'Indique la fecha de inicio.'; return false; }
+        if (hasta.value && hasta.value < desde.value) { err.textContent = '«Hasta» no puede ser anterior a «Desde».'; return false; }
+        var o = { placa: v.placa, cedula: c, nombre: p.nombres, desde: desde.value, hasta: hasta.value || null, observaciones: obs.value.trim() || null };
+        if (a) await FL.Datos.modificar('asignaciones', a.id, o, 'Asignación ' + v.placa + ' a ' + p.nombres);
+        else await FL.Datos.crear('asignaciones', o, null, 'Asignación ' + v.placa + ' a ' + p.nombres + ' (historial)');
+        UI.toast('Asignación guardada.', 'ok'); App.refrescar();
+      } }] });
+  }
+
+  var TIPOS_SOPORTE = {
+    tanqueos: ['Factura o tirilla', 'Odómetro', 'Comprobante de pago', 'Otro soporte'],
+    recorridos: ['Estado al recibir', 'Estado al entregar', 'Odómetro', 'Novedad', 'Otro soporte'],
+    mantenimientos: ['Factura', 'Cotización', 'Antes del trabajo', 'Después del trabajo', 'Garantía', 'Otro soporte'],
+    documentos: ['Documento escaneado', 'Foto del documento', 'Comprobante de pago', 'Otro soporte']
+  };
   function verSoportes(col, r) {
-    UI.modal({ titulo: 'Soportes · ' + FL.ESQ[col].uno + ' ' + (r.placa || r.equipo || ''), ancho: true, cuerpo: h('div', { class: 'pila' },
+    UI.modal({ titulo: 'Archivos · ' + FL.ESQ[col].uno + ' ' + (r.placa || r.equipo || ''), ancho: true, cuerpo: h('div', { class: 'pila' },
       r.advertencias ? h('p', { class: 'aviso' }, 'Nota registrada: ' + r.advertencias) : null,
       r.anulado ? h('p', { class: 'aviso mal' }, 'ANULADO por ' + r.anuladoPor + ' el ' + U.fFechaHora(r.anuladoEn) + '. Motivo: ' + r.motivoAnulacion) : null,
       h('p', { class: 'muted small' }, 'Registrado por ' + (r._creadoPorUsuario || '—') + ' el ' + U.fFechaHora(r._creado) + (r._mod !== r._creado ? ' · modificado por ' + (r._modPorUsuario || '—') + ' el ' + U.fFechaHora(r._mod) : '') + '.'),
-      V.galeria(col + '/' + r.id, { tipos: ['Factura o tirilla', 'Odómetro', 'Estado del vehículo', 'Documento', 'Otro soporte'] })) });
+      V.galeria(col + '/' + r.id, { tipos: TIPOS_SOPORTE[col] || ['Documento', 'Fotografía', 'Otro soporte'] })) });
   }
 
   // =================== LISTADOS ===================

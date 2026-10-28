@@ -49,12 +49,12 @@
         { k: 'nombres', l: 'Nombres y apellidos', t: 'text', req: true, lista: true, ancho: 32 },
         { k: 'cargo', l: 'Cargo', t: 'text', lista: true, ancho: 24 },
         { k: 'razonId', l: 'Razón social', t: 'razon', req: true, lista: true, ancho: 26 },
-        { k: 'centroId', l: 'Centro de costo habitual', t: 'centro', lista: true, ancho: 24 },
+        { k: 'centroId', l: 'Centro de costo habitual', lc: 'Centro de costo', t: 'centro', lista: true, ancho: 24 },
         { k: 'telefono', l: 'Celular (WhatsApp)', t: 'text', inputmode: 'tel', ayuda: '10 dígitos. A este número se envía el aviso de cada tanqueo.' },
         { k: 'correo', l: 'Correo electrónico', t: 'text', inputmode: 'email', ayuda: 'A este correo se envía el aviso de cada tanqueo.' },
-        { k: 'conductor', l: 'Autorizado para conducir vehículos de la compañía', t: 'bool', def: false, lista: true, grupo: 'Conducción' },
+        { k: 'conductor', l: 'Autorizado para conducir vehículos de la compañía', lc: 'Conduce', t: 'bool', def: false, lista: true, grupo: 'Conducción' },
         { k: 'licencias', l: 'Licencias de conducción', t: 'licencias', lista: true, ancho: 34, solo: function (r) { return r.conductor; }, ayuda: 'Agregue una línea por cada categoría (A1, A2, B1, C1…), cada una con su propia fecha de vencimiento.' },
-        { k: 'activo', l: 'Activa en la operación', t: 'bool', def: true, lista: true, grupo: 'Estado' },
+        { k: 'activo', l: 'Activa en la operación', lc: 'Activa', t: 'bool', def: true, lista: true, grupo: 'Estado' },
         { k: 'observaciones', l: 'Observaciones', t: 'textarea' }
       ]
     },

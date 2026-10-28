@@ -47,7 +47,7 @@
         acciones: [{ l: 'Cancelar', valor: false }, { l: etiqueta || 'Confirmar', tipo: peligro ? 'peligro' : 'primario', valor: true }] });
     });
   };
-  UI.pedirTexto = function (titulo, etiqueta, ayuda) {
+  UI.pedirTexto = function (titulo, etiqueta, ayuda, boton, peligro) {
     return new Promise(function (res) {
       var ta = h('textarea', { rows: 3, class: 'campo-input' });
       var err = h('p', { class: 'txt-error small' });
@@ -55,7 +55,7 @@
         titulo: titulo,
         cuerpo: h('div', { class: 'pila' }, h('label', { class: 'campo' }, h('span', { class: 'campo-l' }, etiqueta), ta), ayuda ? h('p', { class: 'muted small' }, ayuda) : null, err),
         alCerrar: function (v) { res(v === true ? ta.value.trim() : null); },
-        acciones: [{ l: 'Cancelar', valor: false }, { l: 'Aceptar', tipo: 'primario', valor: true, fn: function () { if (ta.value.trim().length < 5) { err.textContent = 'Escriba el motivo (mínimo 5 caracteres).'; return false; } } }]
+        acciones: [{ l: 'Cancelar', valor: false }, { l: boton || 'Aceptar', tipo: peligro ? 'peligro' : 'primario', valor: true, fn: function () { if (ta.value.trim().length < 5) { err.textContent = 'Escriba el motivo (mínimo 5 caracteres).'; return false; } } }]
       });
     });
   };

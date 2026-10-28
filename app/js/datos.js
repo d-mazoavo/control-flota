@@ -85,32 +85,112 @@
   }
 
   // ---------- Lote de escrituras con bitácora y marca de cambios ----------
-  // ops: [{ tipo: 'crear'|'modificar', col, id?, data, accion, resumen, cambios? }]
-  async function confirmar(ops) {
-    var b = db.batch(), marcas = {}, salida = [];
-    ops.forEach(function (op) {
+  // Colecciones cuyos avisos de eliminación puede leer el Conductor (no contienen datos personales)
+  var PUBLICAS = ['vehiculos', 'centros', 'razones', 'picoyplaca', 'documentos'];
+  function asiento(ref, col, id, accion, resumen, cambios) {
+    return { ref: ref, coleccion: col, docId: String(id), accion: accion, resumen: String(resumen || '').slice(0, 500), cambios: String(cambios || '').slice(0, 8000),
+      usuario: cuenta.usuario, nombre: cuenta.nombre || '', rol: cuenta.rol, _creado: ts(), _creadoPor: usuarioAuth.uid };
+  }
+  function idBorrado(col, id, creado) { return 'del_' + col + '_' + id + '_' + creado; }
+  function copiaParaBitacora(r) {
+    var o = {};
+    Object.keys(r || {}).forEach(function (k) { if (k !== 'miniatura' && k !== 'data' && k !== '_aud') o[k] = r[k]; });
+    return JSON.stringify(o);
+  }
+  // Cada operación se convierte en un grupo de escrituras que viajan juntas.
+  // n: escrituras; a: consultas que hacen las reglas del servidor (máximo 20 por lote).
+  function preparar(op) {
+    if (op.tipo === 'crear' || op.tipo === 'modificar') {
       var ref = op.id ? db.collection(op.col).doc(String(op.id)) : db.collection(op.col).doc();
       var aud = db.collection('auditoria').doc();
-      var data = limpiar(op.data);
-      data._aud = aud.id;
-      if (op.tipo === 'crear') b.set(ref, Object.assign(data, selloCrea()));
-      else b.update(ref, Object.assign(data, selloMod()));
-      b.set(aud, {
-        ref: op.col + '/' + ref.id, coleccion: op.col, docId: ref.id,
-        accion: op.accion || (op.tipo === 'crear' ? 'Creación' : 'Modificación'),
-        resumen: String(op.resumen || '').slice(0, 500),
-        cambios: op.cambios ? JSON.stringify(op.cambios).slice(0, 8000) : '',
-        usuario: cuenta.usuario, nombre: cuenta.nombre || '', rol: cuenta.rol,
-        _creado: ts(), _creadoPor: usuarioAuth.uid
-      });
-      marcas[op.col] = ts();
-      salida.push(ref.id);
-    });
-    b.set(db.doc('meta/cambios'), marcas, { merge: true });
-    await run(function () { return b.commit(); });
+      return { id: ref.id, n: 2, a: 2, cols: [op.col], fn: function (b) {
+        var data = limpiar(op.data);
+        data._aud = aud.id;
+        if (op.tipo === 'crear') b.set(ref, Object.assign(data, selloCrea()));
+        else b.update(ref, Object.assign(data, selloMod()));
+        b.set(aud, asiento(op.col + '/' + ref.id, op.col, ref.id, op.accion || (op.tipo === 'crear' ? 'Creación' : 'Modificación'), op.resumen, op.cambios ? JSON.stringify(op.cambios) : ''));
+      } };
+    }
+    if (op.tipo === 'eliminar') {
+      var r = op.registro, cre = r && r._creado;
+      if (!cre) throw err('El registro no tiene fecha de creación registrada; no se puede eliminar.');
+      var did = idBorrado(op.col, op.id, cre), foto = op.col === 'fotos', partes = foto ? (Number(r.partes) || 0) : 0;
+      return { id: String(op.id), n: foto ? 2 + partes : 3, a: foto ? 1 : 2, cols: foto ? ['fotos'] : [op.col, 'eliminados'], fn: function (b) {
+        b.delete(db.collection(op.col).doc(String(op.id)));
+        for (var i = 0; i < partes; i++) b.delete(db.doc('fotos/' + op.id + '/partes/' + i));
+        b.set(db.collection('auditoria').doc(did), asiento(op.col + '/' + op.id, op.col, op.id, 'Eliminación', (op.resumen || '') + (op.motivo ? ' — Motivo: ' + op.motivo : ''), copiaParaBitacora(r)));
+        if (!foto) b.set(db.collection('eliminados').doc(did), { col: op.col, docId: String(op.id), creado: cre, publico: PUBLICAS.indexOf(op.col) >= 0, _mod: ts() });
+      } };
+    }
+    if (op.tipo === 'foto-modificar') {
+      var fr = db.doc('fotos/' + op.foto.id), au = db.collection('auditoria').doc();
+      return { id: op.foto.id, n: 2, a: 0, cols: ['fotos'], fn: function (b) {
+        b.update(fr, Object.assign(limpiar(op.data), selloMod()));
+        b.set(au, asiento('fotos/' + op.foto.id, 'fotos', op.foto.id, 'Modificación', op.resumen, JSON.stringify(op.cambios || op.data)));
+      } };
+    }
+    if (op.tipo === 'directo') return { id: op.id || '', n: op.n, a: op.a || 0, cols: op.cols || [], fn: op.fn };
+    throw err('Operación desconocida.');
+  }
+  // Envía los grupos en lotes que respetan los límites del servidor; los grupos nunca se parten.
+  async function ejecutar(ops) {
+    var grupos = ops.map(preparar), lote = [], n = 0, a = 0;
+    async function enviar() {
+      if (!lote.length) return;
+      var b = db.batch(), marcas = {};
+      lote.forEach(function (g) { g.fn(b); g.cols.forEach(function (c) { marcas[c] = ts(); }); });
+      b.set(db.doc('meta/cambios'), marcas, { merge: true });
+      await run(function () { return b.commit(); }, 60000);
+      lote = []; n = 0; a = 0;
+    }
+    for (var i = 0; i < grupos.length; i++) {
+      var g = grupos[i];
+      if (lote.length && (n + g.n > 400 || a + g.a > 12)) await enviar();
+      lote.push(g); n += g.n; a += g.a;
+    }
+    await enviar();
+    Object.keys(cacheFotos).forEach(function (k) { delete cacheFotos[k]; });
+    return grupos.map(function (g) { return g.id; });
+  }
+  async function confirmar(ops) {
+    var salida = await ejecutar(ops);
     // Se trae del servidor lo recién escrito (hora oficial del servidor)
     await FL.Datos.sincronizar(true);
     return salida;
+  }
+
+  // Retira de la copia local lo que el Administrador eliminó (desde cualquier equipo)
+  async function aplicarEliminados(m) {
+    var me = m.eliminados || 0;
+    var ce = (await FL.Store.get('c:_eliminados')) || { cursor: null };
+    if (ce.cursor != null && me <= ce.cursor) return false;
+    var conductor = cuenta && cuenta.rol === 'Conductor';
+    var habiaCopia = false;
+    for (var i = 0; i < FL.COLECCIONES.length; i++) if ((await copia(FL.COLECCIONES[i])).cursor != null) habiaCopia = true;
+    if (ce.cursor == null && !habiaCopia) { ce.cursor = me; await FL.Store.set('c:_eliminados', ce); return false; }
+    var desde = Math.max(0, (ce.cursor || 0) - SOLAPE);
+    var snap;
+    try {
+      snap = await run(function () {
+        return conductor ? db.collection('eliminados').where('publico', '==', true).get({ source: 'server' })
+          : db.collection('eliminados').where('_mod', '>', firebase.firestore.Timestamp.fromMillis(desde)).get({ source: 'server' });
+      }, 60000);
+    } catch (e) {
+      if (e.sinPermiso) return false;   // reglas del servidor aún sin publicar: la sincronización sigue normal
+      throw e;
+    }
+    var cambio = false, tocadas = {};
+    for (var k = 0; k < snap.docs.length; k++) {
+      var x = snap.docs[k].data();
+      if (!x.col || FL.COLECCIONES.indexOf(x.col) < 0) continue;
+      var c = await copia(x.col), r = c.docs[x.docId];
+      // Solo se retira la misma "versión" eliminada (no un registro creado después con el mismo identificador)
+      if (r && (!r._creado || r._creado === x.creado)) { delete c.docs[x.docId]; cambio = true; tocadas[x.col] = 1; }
+    }
+    for (var col in tocadas) await FL.Store.set('c:' + col, cache[col]);
+    ce.cursor = me;
+    await FL.Store.set('c:_eliminados', ce);
+    return cambio;
   }
 
   // ---------- Copia local por colección ----------
@@ -186,7 +266,7 @@
     // Trae solo lo modificado desde la última consulta (1 lectura si nada cambió)
     sincronizar: async function () {
       var m = await leerMarcador();
-      var hubo = false;
+      var hubo = await aplicarEliminados(m);
       var conductor = cuenta && cuenta.rol === 'Conductor';
       for (var i = 0; i < FL.COLECCIONES.length; i++) {
         var col = FL.COLECCIONES[i], c = await copia(col), mk = m[col] || 0;
@@ -303,8 +383,102 @@
     // Última fotografía de cada tipo (por ejemplo, de cada ángulo del vehículo)
     ultimasPorTipo: async function (ref) {
       var o = {};
-      (await D.fotos(ref)).forEach(function (f) { o[f.tipo] = f; });
+      (await D.fotos(ref)).forEach(function (f) { if (D.esImagen(f)) o[f.tipo] = f; });
       return o;
+    },
+    esImagen: function (f) { return !!(f && typeof f.data === 'string' && f.data.indexOf('data:image/') === 0); },
+    // Documentos (PDF, Word, Excel…) hasta 8 MB: se guardan por partes en la base de datos
+    subirArchivo: async function (ref, file, tipo, descripcion) {
+      var MAX = 8 * 1024 * 1024, TAM = 700000;
+      if (file.size > MAX) throw err('«' + file.name + '» pesa ' + U.n(file.size / 1048576, 1) + ' MB; el máximo es 8 MB. Redúzcalo o divídalo.');
+      var buf = await file.arrayBuffer();
+      var huella = await U.sha256(new Blob([buf]));
+      var bytes = new Uint8Array(buf), bin = '';
+      for (var i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      var b64 = btoa(bin), partes = Math.max(1, Math.ceil(b64.length / TAM));
+      var f = db.collection('fotos').doc(), aud = db.collection('auditoria').doc(), b = db.batch();
+      b.set(f, { ref: ref, tipo: tipo || 'Documento', descripcion: descripcion || '', nombre: String(file.name || 'archivo').slice(0, 200), mime: file.type || 'application/octet-stream',
+        bytes: file.size, sha256: huella, data: '', partes: partes, completo: false, _creado: ts(), _creadoPor: usuarioAuth.uid, _creadoPorUsuario: cuenta.usuario });
+      b.set(aud, asiento('fotos/' + f.id, 'fotos', f.id, 'Creación', (tipo || 'Documento') + ' «' + file.name + '» de ' + ref + (descripcion ? ' — ' + descripcion : ''), huella));
+      await run(function () { return b.commit(); }, 60000);
+      for (var p = 0; p < partes; p++) {
+        var trozo = b64.slice(p * TAM, (p + 1) * TAM), n = p;
+        await run(function () { return db.doc('fotos/' + f.id + '/partes/' + n).set({ i: n, data: trozo }); }, 120000);
+      }
+      await run(function () { return db.doc('fotos/' + f.id).update({ completo: true }); });
+      delete cacheFotos[ref];
+      return f.id;
+    },
+    // Contenido del archivo como Blob (imágenes o documentos por partes)
+    contenidoArchivo: async function (f) {
+      var tipo, b64;
+      if (D.esImagen(f)) { tipo = f.data.slice(5, f.data.indexOf(';')); b64 = f.data.slice(f.data.indexOf(',') + 1); }
+      else {
+        var s = await run(function () { return db.collection('fotos').doc(f.id).collection('partes').get({ source: 'server' }); }, 120000);
+        var partes = []; s.forEach(function (d) { partes.push(d.data()); });
+        if (partes.length !== (Number(f.partes) || 0)) throw err('El archivo está incompleto (la carga no terminó). Elimínelo y cárguelo de nuevo.');
+        partes.sort(function (a, b) { return a.i - b.i; });
+        b64 = partes.map(function (p) { return p.data; }).join(''); tipo = f.mime || 'application/octet-stream';
+      }
+      var bin = atob(b64), arr = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return new Blob([arr], { type: tipo });
+    },
+    editarArchivo: async function (f, datos) {
+      var cambios = {};
+      Object.keys(datos).forEach(function (k) { if ((f[k] || '') !== (datos[k] || '')) cambios[k] = [f[k] || '', datos[k] || '']; });
+      if (!Object.keys(cambios).length) return;
+      await ejecutar([{ tipo: 'foto-modificar', foto: f, data: datos, cambios: cambios, resumen: 'Archivo de ' + f.ref + ' (' + (f.nombre || f.tipo) + ')' }]);
+    },
+    eliminarArchivo: async function (f, motivo) {
+      await ejecutar([{ tipo: 'eliminar', col: 'fotos', id: f.id, registro: f, motivo: motivo, resumen: (f.tipo || 'Archivo') + (f.nombre ? ' «' + f.nombre + '»' : '') + ' de ' + f.ref }]);
+    },
+    // Eliminación definitiva de un registro y de sus archivos (copia completa en la bitácora)
+    eliminar: async function (col, id, motivo, resumen) {
+      var r = D.uno(col, id);
+      if (!r) throw err('El registro ya no existe.');
+      var adj = await D.fotos(col + '/' + id, true), ops = [];
+      adj.forEach(function (f) { ops.push({ tipo: 'eliminar', col: 'fotos', id: f.id, registro: f, motivo: 'Eliminación del registro ' + col + '/' + id + ': ' + motivo, resumen: (f.tipo || 'Archivo') + ' de ' + f.ref }); });
+      ops.push({ tipo: 'eliminar', col: col, id: id, registro: r, motivo: motivo, resumen: resumen });
+      await confirmar(ops);
+    },
+    // Corrige la cédula de una persona o la placa de un vehículo y traslada todo lo relacionado
+    cambiarId: async function (col, viejo, nuevo) {
+      var campo = col === 'personas' ? 'cedula' : 'placa';
+      var r = D.uno(col, viejo);
+      if (!r) throw err('El registro no existe.');
+      if (!nuevo || nuevo === viejo) throw err('Escriba un valor distinto.');
+      if (D.uno(col, nuevo)) throw err('Ya existe un registro con ' + (campo === 'cedula' ? 'la cédula ' : 'la placa ') + nuevo + '.');
+      var nota = 'Corrección de ' + (campo === 'cedula' ? 'cédula' : 'placa') + ' ' + viejo + ' → ' + nuevo;
+      var datos = {};
+      Object.keys(r).forEach(function (k) { if (k !== 'id' && k[0] !== '_') datos[k] = r[k]; });
+      datos[campo] = nuevo;
+      var ops = [{ tipo: 'crear', col: col, id: nuevo, data: datos, resumen: nota, accion: 'Corrección de identificador' }];
+      var rel = col === 'personas'
+        ? [['tanqueos', 'cedula'], ['recorridos', 'cedula'], ['mantenimientos', 'cedula'], ['vehiculos', 'responsableCedula'], ['asignaciones', 'cedula']]
+        : [['tanqueos', 'placa'], ['recorridos', 'placa'], ['mantenimientos', 'placa'], ['documentos', 'placa'], ['asignaciones', 'placa']];
+      rel.forEach(function (x) {
+        D.lista(x[0]).filter(function (y) { return y[x[1]] === viejo; }).forEach(function (y) {
+          var o = {}; o[x[1]] = nuevo;
+          if (col === 'vehiculos' && y.vehiculoDesc) o.vehiculoDesc = String(y.vehiculoDesc).replace(viejo, nuevo);
+          var cmb = {}; cmb[x[1]] = [viejo, nuevo];
+          ops.push({ tipo: 'modificar', col: x[0], id: y.id, data: o, resumen: nota, cambios: cmb, accion: 'Corrección de identificador' });
+        });
+      });
+      (await D.fotos(col + '/' + viejo, true)).forEach(function (f) {
+        ops.push({ tipo: 'foto-modificar', foto: f, data: { ref: col + '/' + nuevo }, cambios: { ref: [f.ref, col + '/' + nuevo] }, resumen: nota });
+      });
+      if (col === 'personas') {
+        (await D.usuarios()).filter(function (u) { return u.cedula === viejo; }).forEach(function (u) {
+          ops.push({ tipo: 'directo', id: u.usuario, n: 3, cols: [], fn: function (b) {
+            b.update(db.doc('usuarios/' + u.usuario), Object.assign({ cedula: nuevo }, selloMod()));
+            if (u.uid) b.update(db.doc('cuentas/' + u.uid), { cedula: nuevo, _mod: ts() });
+            b.set(db.collection('auditoria').doc(), asiento('usuarios/' + u.usuario, 'usuarios', u.usuario, 'Corrección de identificador', nota, JSON.stringify({ cedula: [viejo, nuevo] })));
+          } });
+        });
+      }
+      ops.push({ tipo: 'eliminar', col: col, id: viejo, registro: r, motivo: nota, resumen: nota });
+      await confirmar(ops);
     },
     subirFoto: async function (ref, dataUrl, tipo, descripcion) {
       if (dataUrl.length > 880000) throw err('La fotografía es demasiado pesada incluso reducida. Use una de menor resolución.');
@@ -316,13 +490,7 @@
       delete cacheFotos[ref];
       return f.id;
     },
-    borrarFoto: async function (foto, motivo) {
-      var aud = db.collection('auditoria').doc(), b = db.batch();
-      delete cacheFotos[foto.ref];
-      b.delete(db.doc('fotos/' + foto.id));
-      b.set(aud, { ref: 'fotos/' + foto.id, coleccion: 'fotos', docId: foto.id, accion: 'Eliminación', resumen: 'Fotografía de ' + foto.ref + '. Motivo: ' + motivo, cambios: foto.sha256 || '', usuario: cuenta.usuario, nombre: cuenta.nombre || '', rol: cuenta.rol, _creado: ts(), _creadoPor: usuarioAuth.uid });
-      await run(function () { return b.commit(); });
-    },
+    borrarFoto: async function (foto, motivo) { return D.eliminarArchivo(foto, motivo); },
 
     // ---------- Usuarios (solo Administrador) ----------
     usuarios: async function () {
