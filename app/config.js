@@ -5,14 +5,23 @@
  * ============================================================================
  */
 
-// ====== PEGUE AQUÍ, reemplazando las 8 líneas siguientes, el bloque que le muestra Firebase ======
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "PEGAR_AQUI",
-  authDomain: "PEGAR_AQUI",
-  projectId: "PEGAR_AQUI",
-  storageBucket: "PEGAR_AQUI",
-  messagingSenderId: "PEGAR_AQUI",
-  appId: "PEGAR_AQUI"
+  apiKey: "AIzaSyCEh5a4LW6O2BhiPve2eEj9yW1OKTk_lzw",
+  authDomain: "avopak-flota.firebaseapp.com",
+  projectId: "avopak-flota",
+  storageBucket: "avopak-flota.firebasestorage.app",
+  messagingSenderId: "401043787827",
+  appId: "1:401043787827:web:994e5610d76dc5f5fdd346"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
 };
 // ====== FIN DEL BLOQUE DE FIREBASE ======
 
