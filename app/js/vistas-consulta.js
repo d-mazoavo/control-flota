@@ -4,6 +4,7 @@
   var FL = (window.FL = window.FL || {});
   var U = FL.U, h = U.h, UI = FL.UI, V = FL.Vistas, App = FL.App, C = FL.Calc;
   var TODOS = ['Administrador', 'Analista', 'Gobierno Corporativo'];
+  var CON_CONDUCTOR = TODOS.concat(['Conductor']);
   var SERIES = { comb: 'var(--s1)', mant: 'var(--s2)', docs: 'var(--s3)' };
 
   function vigentes(col) { return C.vigentes(FL.Datos.lista(col)); }
@@ -23,7 +24,41 @@
   function avisoAdvertencia(r) { return r.advertencias ? h('span', { class: 'chip alerta', title: r.advertencias }, '! Nota') : null; }
 
   // =================== TABLERO ===================
+  // =================== INICIO DEL CONDUCTOR ===================
+  function inicioConductor(cont) {
+    var yo = FL.Datos.yo(), d = App.datos(), p = App.param();
+    var per = FL.Datos.uno('personas', yo.cedula);
+    cont.appendChild(V.titulo('Hola, ' + (per ? per.nombres : yo.nombre), 'Registre aquí sus tanqueos y el uso de los vehículos que conduce.',
+      [h('a', { class: 'btn primario', href: '#/registrar/tanqueo' }, '⛽ Registrar tanqueo'), h('a', { class: 'btn primario', href: '#/registrar/uso' }, '⇄ Recibir o entregar vehículo')]));
+    if (!per) { cont.appendChild(h('p', { class: 'aviso mal' }, 'Su usuario no está vinculado a una persona registrada. Informe al Director de Seguridad Integral.')); return; }
+    var lic = C.licencias(per);
+    cont.appendChild(UI.seccion('Mis licencias de conducción', lic.length ? h('div', { class: 'fila gap wrap' }, lic.map(function (l) {
+      var dd = l.vence ? U.diasHasta(l.vence) : null;
+      return UI.chip(l.categoria + (dd == null ? ' · sin vencimiento' : dd < 0 ? ' · VENCIDA el ' + U.fFecha(l.vence) : ' · vence el ' + U.fFecha(l.vence)), dd == null || dd < 0 ? 'mal' : dd <= (p.diasAlerta || 30) ? 'alerta' : 'bien');
+    })) : h('p', { class: 'txt-alerta' }, 'No tiene licencias registradas. Informe al Director de Seguridad Integral.')));
+    var abiertos = C.vigentes(d.recorridos).filter(function (x) { return x.estado === 'Abierto'; });
+    if (abiertos.length) cont.appendChild(UI.seccion('Vehículos que tiene recibidos (pendientes de entrega)', UI.tabla({
+      columnas: [{ l: 'Vehículo', v: function (r) { return r.placa; } }, { l: 'Recibió', v: function (r) { return r.fechaRecibe; }, tipo: 'fechahora' }, { l: 'Km al recibir', v: function (r) { return r.kmRecibe; }, tipo: 'num' }, { l: 'Motivo', v: function (r) { return r.motivo; } }],
+      filas: abiertos, acciones: function (r) { return h('button', { class: 'btn xs primario', type: 'button', onclick: function () { V.registrarEntrega(r); } }, 'Registrar entrega'); }
+    })));
+    var mios = C.vigentes(d.vehiculos).filter(function (v) { return v.responsableCedula === yo.cedula && v.estado !== 'Dado de baja'; });
+    if (mios.length) cont.appendChild(UI.seccion('Vehículos a mi cargo', h('div', { class: 'pila' }, mios.map(function (v) {
+      var pyp = C.picoYPlaca(v, new Date(), d.picoyplaca), docs = C.documentosVehiculo(v, d.documentos, p), ult = C.ultimaLectura(v, d);
+      return h('div', { class: 'tarjeta delgada pila sm' },
+        h('div', { class: 'fila gap wrap' }, v.miniatura ? h('img', { src: v.miniatura, alt: '', class: 'mini' }) : null, h('strong', null, v.placa), h('span', { class: 'muted' }, [v.tipo, v.marca, v.linea].filter(Boolean).join(' ')),
+          pyp.length ? UI.chip('! Pico y placa hoy: ' + pyp.map(function (x) { return x.ciudad + (x.horario ? ' (' + x.horario + ')' : ''); }).join(', '), 'alerta') : UI.chip('Sin pico y placa hoy')),
+        h('span', { class: 'small' }, 'Último kilometraje registrado: ' + (ult ? U.n(ult.km) + ' km' : 'sin registro')),
+        h('div', { class: 'fila gap wrap' }, docs.map(function (x) { return h('span', { class: 'small' }, x.tipo + ': ', UI.chipEstado(x.estado), x.doc ? ' ' + U.fFecha(x.doc.fechaVencimiento) : ''); })));
+    }))));
+    var ult = C.vigentes(d.tanqueos).sort(function (a, b) { return U.toDate(b.fecha) - U.toDate(a.fecha); }).slice(0, 5);
+    cont.appendChild(UI.seccion('Mis últimos tanqueos', UI.tabla({
+      columnas: [{ l: 'Fecha', v: function (r) { return r.fecha; }, tipo: 'fechahora' }, { l: 'Destino', v: function (r) { return r.placa || r.equipo; } }, { l: 'Galones', v: function (r) { return r.galones; }, tipo: 'num', dec: 2 }, { l: 'Valor', v: function (r) { return r.valorTotal; }, tipo: 'cop' }, { l: 'Registró', v: function (r) { return r._creadoPorUsuario; } }],
+      filas: ult, vacio: 'Aún no tiene tanqueos registrados.'
+    })));
+  }
+
   App.ruta('/tablero', function (cont) {
+    if (FL.Datos.esConductor()) return inicioConductor(cont);
     var anio = V.anio, d = App.datos(), p = App.param();
     var r = C.rangoAnio(anio);
     var veh = C.vigentes(d.vehiculos).filter(function (v) { return v.estado !== 'Dado de baja'; });
@@ -94,7 +129,7 @@
       ],
       filas: porVeh, alAbrir: function (x) { App.ir('/vehiculo/' + encodeURIComponent(x.v.placa)); }, vacio: 'Aún no hay vehículos registrados.'
     })));
-  }, TODOS);
+  }, CON_CONDUCTOR);
 
   // =================== VEHÍCULOS ===================
   App.ruta('/vehiculos', function (cont) {
@@ -262,7 +297,11 @@
       filtros: [filtroAnio('tanqueos', 'fecha'), filtroMes('fecha'), { l: 'Destino', opts: [['Vehículo', 'Vehículos'], ['Otro uso', 'Otros usos']], fn: function (r, v) { return r.destino === v; } }]
         .concat(sinVehiculo ? [] : [{ l: 'Vehículo', opts: opcVehiculos(), fn: function (r, v) { return r.placa === v; } }])
         .concat([{ l: 'Centro de costo', opts: opcCentros(), fn: function (r, v) { return r.centroId === v; } }, { l: 'Razón social', opts: opcRazones(), fn: function (r, v) { return r.razonId === v; } }, filtroAnulados]),
-      acciones: function (r) { return V.accionesRegistro('tanqueos', r, [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('tanqueos', r); } }, 'Soportes')]); }
+      acciones: function (r) {
+        var extra = [h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes('tanqueos', r); } }, 'Soportes')];
+        if (!r.anulado && V.puedeIngresar()) extra.push(h('button', { class: 'btn xs', type: 'button', onclick: function () { UI.modal({ titulo: 'Aviso del tanqueo', ancho: true, cuerpo: FL.Notif.panel(r.id, false) }); } }, 'Avisar'));
+        return V.accionesRegistro('tanqueos', r, extra);
+      }
     });
   }
   function tablaUso(filas) {
@@ -314,6 +353,11 @@
 
   // =================== LISTADOS ===================
   App.ruta('/tanqueos', function (cont) {
+    if (FL.Datos.esConductor()) {
+      cont.appendChild(V.titulo('Mis tanqueos', 'Tanqueos registrados a su nombre.', [botonNuevo('/registrar/tanqueo', '+ Registrar tanqueo')]));
+      cont.appendChild(h('section', { class: 'tarjeta' }, tablaTanqueos(function () { return FL.Datos.lista('tanqueos'); })));
+      return;
+    }
     var d = App.datos(), p = App.param();
     cont.appendChild(V.titulo('Combustible y rendimiento', 'Rendimiento calculado entre tanqueos a tanque lleno.', [botonNuevo('/registrar/tanqueo', '+ Registrar tanqueo')]));
     var veh = C.vigentes(d.vehiculos).filter(function (v) { return v.combustible !== 'Eléctrico'; });
@@ -329,12 +373,13 @@
       alAbrir: function (x) { pestanaHV = 'combustible'; App.ir('/vehiculo/' + encodeURIComponent(x.v.placa)); }
     })));
     cont.appendChild(UI.seccion('Todos los tanqueos', tablaTanqueos(function () { return FL.Datos.lista('tanqueos'); })));
-  }, TODOS);
+  }, CON_CONDUCTOR);
 
   App.ruta('/uso', function (cont) {
-    cont.appendChild(V.titulo('Uso diario', 'Quién condujo cada vehículo, con qué kilometraje lo recibió y lo entregó.', [botonNuevo('/registrar/uso', '+ Registrar uso')]));
+    var k = FL.Datos.esConductor();
+    cont.appendChild(V.titulo(k ? 'Mis usos de vehículos' : 'Uso diario', k ? 'Vehículos que ha recibido y entregado.' : 'Quién condujo cada vehículo, con qué kilometraje lo recibió y lo entregó.', [botonNuevo('/registrar/uso', '+ Registrar uso')]));
     cont.appendChild(h('section', { class: 'tarjeta' }, tablaUso(function () { return FL.Datos.lista('recorridos'); })));
-  }, TODOS);
+  }, CON_CONDUCTOR);
   App.ruta('/mantenimientos', function (cont) {
     cont.appendChild(V.titulo('Mantenimientos y arreglos', null, [botonNuevo('/registrar/mantenimiento', '+ Registrar mantenimiento')]));
     cont.appendChild(h('section', { class: 'tarjeta' }, tablaMant(function () { return FL.Datos.lista('mantenimientos'); })));

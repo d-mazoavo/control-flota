@@ -3,7 +3,7 @@
   'use strict';
   var FL = (window.FL = window.FL || {});
   var U = FL.U, h = U.h, UI = FL.UI, V = FL.Vistas, App = FL.App;
-  var A = 'Administrador', N = 'Analista';
+  var A = 'Administrador', N = 'Analista', K = 'Conductor';
 
   // Autocompletado común: la cédula y la placa llenan el resto de la información
   V.alCambiarRegistro = function (col) {
@@ -87,10 +87,15 @@
     return notas;
   }
 
+  // El Conductor solo registra a su nombre: su cédula queda fija en el formulario
+  function inicialPropio() { return FL.Datos.esConductor() ? { cedula: FL.Datos.yo().cedula } : null; }
+  function bloqueoPropio() { return FL.Datos.esConductor() ? ['cedula'] : []; }
+  V.kmDe = function (col, o) { return col === 'tanqueos' ? o.odometro : col === 'recorridos' ? (typeof o.kmEntrega === 'number' ? o.kmEntrega : o.kmRecibe) : o.odometro; };
+
   function pantallaRegistro(col, titulo, subtitulo, opts) {
     opts = opts || {};
     return function (cont) {
-      var f = UI.formulario(col, opts.inicial ? opts.inicial() : null, { alCambiar: V.alCambiarRegistro(col), excluir: opts.excluir });
+      var f = UI.formulario(col, inicialPropio(), { alCambiar: V.alCambiarRegistro(col), excluir: opts.excluir, soloLectura: bloqueoPropio() });
       var btn = h('button', { class: 'btn primario', type: 'button' }, 'Guardar');
       btn.addEventListener('click', async function () {
         var r = f.leer(); if (!r) return;
@@ -103,8 +108,10 @@
         try {
           var id = await FL.Datos.crear(col, o, null, FL.ESQ[col].uno + ' ' + (o.placa || o.equipo || '') + ' — ' + (o.personaNombre || ''));
           UI.toast(FL.ESQ[col].uno.charAt(0).toUpperCase() + FL.ESQ[col].uno.slice(1) + ' registrado.', 'ok');
+          if (o.placa && !notas.length) await FL.Datos.actualizarOdometro(o.placa, V.kmDe(col, o), col === 'documentos' ? null : (o.fecha || o.fechaRecibe));
           App.refrescar();
-          if (opts.soporte) V.ofrecerSoporte(col + '/' + id, 'Soportes del ' + FL.ESQ[col].uno, opts.soporte);
+          if (col === 'tanqueos') V.despuesTanqueo(id);
+          else if (opts.soporte) V.ofrecerSoporte(col + '/' + id, 'Soportes del ' + FL.ESQ[col].uno, opts.soporte);
         } catch (e) { UI.toast(e.message, 'error'); btn.disabled = false; }
       });
       cont.appendChild(V.titulo(titulo, subtitulo));
@@ -113,10 +120,18 @@
     };
   }
 
+  // Después de registrar un tanqueo: aviso a la persona (correo y WhatsApp) y soportes
+  V.despuesTanqueo = function (id) {
+    UI.modal({ titulo: 'Tanqueo registrado', ancho: true, cuerpo: h('div', { class: 'pila' },
+      UI.seccion('Aviso a quien tanqueó', FL.Notif.panel(id, true)),
+      UI.seccion('Soportes (opcional)', h('div', { class: 'pila sm' }, h('p', { class: 'muted small' }, 'Foto de la factura o tirilla y del odómetro.'), V.galeria('tanqueos/' + id, { tipos: ['Factura o tirilla', 'Odómetro', 'Otro soporte'] })))),
+      acciones: [{ l: 'Terminar', tipo: 'primario' }] });
+  };
+
   App.ruta('/registrar/tanqueo', pantallaRegistro('tanqueos', 'Registrar tanqueo', 'Digite la cédula de quien tanquea: el nombre, el cargo y el centro de costo se completan solos. Si el combustible no va a un vehículo, elija «Otro uso» y justifíquelo.', {
     soporte: ['Factura o tirilla', 'Odómetro', 'Otro soporte'],
     despues: function () { return ultimos('tanqueos', function (r) { return r.fecha; }, [{ l: 'Fecha', v: function (r) { return r.fecha; }, tipo: 'fechahora' }, { l: 'Destino', v: function (r) { return r.placa || r.equipo; } }, { l: 'Quien tanquea', v: function (r) { return r.personaNombre; } }, { l: 'Galones', v: function (r) { return r.galones; }, tipo: 'num', dec: 2 }, { l: 'Valor', v: function (r) { return r.valorTotal; }, tipo: 'cop' }]); }
-  }), [A, N]);
+  }), [A, N, K]);
 
   App.ruta('/registrar/mantenimiento', pantallaRegistro('mantenimientos', 'Registrar mantenimiento o arreglo', 'Quién lo hizo, dónde, cuánto costó y cuándo es el próximo.', {
     soporte: ['Factura', 'Antes del trabajo', 'Después del trabajo', 'Otro soporte'],
@@ -140,7 +155,7 @@
       zona.appendChild(pantallaParcial(completo.checked));
     }
     function pantallaParcial(conEntrega) {
-      var f = UI.formulario('recorridos', null, { alCambiar: V.alCambiarRegistro('recorridos'), excluir: conEntrega ? [] : ['fechaEntrega', 'kmEntrega', 'kmRecorridos', 'combustibleEntrega', 'entregadoA', 'novedadesEntrega'] });
+      var f = UI.formulario('recorridos', inicialPropio(), { alCambiar: V.alCambiarRegistro('recorridos'), soloLectura: bloqueoPropio(), excluir: conEntrega ? [] : ['fechaEntrega', 'kmEntrega', 'kmRecorridos', 'combustibleEntrega', 'entregadoA', 'novedadesEntrega'] });
       var btn = h('button', { class: 'btn primario', type: 'button' }, conEntrega ? 'Guardar uso completo' : 'Registrar recibo del vehículo');
       btn.addEventListener('click', async function () {
         var r = f.leer(); if (!r) return;
@@ -156,6 +171,7 @@
         btn.disabled = true;
         try {
           var id = await FL.Datos.crear('recorridos', o, null, 'Uso diario ' + o.placa + ' — ' + o.personaNombre);
+          if (!notas.length) await FL.Datos.actualizarOdometro(o.placa, V.kmDe('recorridos', o), o.fechaEntrega || o.fechaRecibe);
           UI.toast(conEntrega ? 'Uso diario registrado.' : 'Recibo registrado. Cuando devuelvan el vehículo, registre la entrega abajo.', 'ok');
           App.refrescar();
           V.ofrecerSoporte('recorridos/' + id, 'Fotografías del estado del vehículo', ['Estado al recibir', 'Estado al entregar', 'Odómetro', 'Novedad']);
@@ -174,7 +190,7 @@
       filas: abiertos, vacio: 'No hay vehículos pendientes de entrega.',
       acciones: function (r) { return h('button', { class: 'btn xs primario', type: 'button', onclick: function () { V.registrarEntrega(r); } }, 'Registrar entrega'); }
     })));
-  }, [A, N]);
+  }, [A, N, K]);
 
   V.registrarEntrega = function (r) {
     var f = UI.formulario('recorridos', Object.assign({}, r, { fechaEntrega: U.ymdhm(new Date()) }), { campos: ['fechaEntrega', 'kmEntrega', 'kmRecorridos', 'combustibleEntrega', 'entregadoA', 'novedadesEntrega'], alCambiar: V.alCambiarRegistro('recorridos') });
@@ -193,6 +209,7 @@
           estado: 'Cerrado', kmEntrega: x.kmEntrega, kmRecorridos: kmDia, fechaEntrega: x.fechaEntrega,
           combustibleEntrega: x.combustibleEntrega || null, entregadoA: x.entregadoA || null, novedadesEntrega: x.novedadesEntrega || null
         }, 'Entrega ' + r.placa + ' — ' + U.n(kmDia) + ' km', 'Cierre');
+        await FL.Datos.actualizarOdometro(r.placa, x.kmEntrega, x.fechaEntrega);
         UI.toast('Entrega registrada.', 'ok'); App.refrescar();
       } }]
     });

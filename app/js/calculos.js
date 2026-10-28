@@ -51,6 +51,7 @@
   C.lecturas = function (v, d) {
     var p = v.placa, out = [];
     if (typeof v.odometroInicial === 'number') out.push({ fecha: t(v.fechaIngreso) || 0, km: v.odometroInicial, fuente: 'Registro inicial' });
+    if (C.usarResumen && typeof v.odometroUltimo === 'number') out.push({ fecha: t(v.odometroFecha) || 0, km: v.odometroUltimo, fuente: 'Último registro' });
     vig(d.tanqueos).forEach(function (x) { if (x.placa === p && x.destino === 'Vehículo' && typeof x.odometro === 'number') out.push({ fecha: t(x.fecha), km: x.odometro, fuente: 'Tanqueo', id: x.id }); });
     vig(d.recorridos).forEach(function (x) {
       if (x.placa !== p) return;

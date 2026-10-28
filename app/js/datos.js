@@ -152,9 +152,11 @@
       }
       return null;
     },
-    yo: function () { return cuenta ? { uid: usuarioAuth.uid, usuario: cuenta.usuario, nombre: cuenta.nombre, rol: cuenta.rol, temporal: !!cuenta.temporalHasta } : null; },
+    yo: function () { return cuenta ? { uid: usuarioAuth.uid, usuario: cuenta.usuario, nombre: cuenta.nombre, rol: cuenta.rol, cedula: cuenta.cedula || '', temporal: !!cuenta.temporalHasta } : null; },
     esAdmin: function () { return !!cuenta && cuenta.rol === 'Administrador'; },
-    puedeIngresar: function () { return !!cuenta && (cuenta.rol === 'Administrador' || cuenta.rol === 'Analista'); },
+    esConductor: function () { return !!cuenta && cuenta.rol === 'Conductor'; },
+    // Puede registrar tanqueos y uso diario (el Conductor, solo los propios)
+    puedeIngresar: function () { return !!cuenta && (cuenta.rol === 'Administrador' || cuenta.rol === 'Analista' || cuenta.rol === 'Conductor'); },
 
     ingresar: async function (usuario, clave) {
       var u = U.normUsuario(usuario);
@@ -185,9 +187,22 @@
     sincronizar: async function () {
       var m = await leerMarcador();
       var hubo = false;
+      var conductor = cuenta && cuenta.rol === 'Conductor';
       for (var i = 0; i < FL.COLECCIONES.length; i++) {
         var col = FL.COLECCIONES[i], c = await copia(col), mk = m[col] || 0;
         if (c.cursor != null && mk <= c.cursor) continue;
+        if (conductor && (col === 'asignaciones' || col === 'mantenimientos')) { c.cursor = mk; continue; }   // no las consulta
+        if (conductor && (col === 'personas' || col === 'tanqueos' || col === 'recorridos')) {
+          // El Conductor solo lee sus propios registros (las reglas del servidor no le permiten más)
+          var ced = cuenta.cedula || '-';
+          var sn = await run(function () { return db.collection(col).where('cedula', '==', ced).get({ source: 'server' }); }, 60000);
+          c.docs = {};
+          sn.forEach(function (dd) { c.docs[dd.id] = normDoc(dd); });
+          c.cursor = mk;
+          await FL.Store.set('c:' + col, c);
+          hubo = true;
+          continue;
+        }
         var desde = Math.max(0, (c.cursor || 0) - SOLAPE);
         var snap = await run(function () {
           return db.collection(col).where('_mod', '>', firebase.firestore.Timestamp.fromMillis(desde)).get({ source: 'server' });
@@ -253,6 +268,21 @@
         });
       } catch (e) { /* la descarga no se bloquea por la bitácora */ }
     },
+    // Aviso enviado o preparado (correo, WhatsApp) sobre un registro
+    registrarNotificacion: async function (ref, canal, destino, detalle) {
+      try {
+        await run(function () {
+          return db.collection('auditoria').add({ ref: ref, coleccion: ref.split('/')[0], docId: ref.split('/')[1] || '', accion: 'Notificación', resumen: (canal + ' a ' + destino + (detalle ? ' — ' + detalle : '')).slice(0, 500), cambios: '', usuario: cuenta.usuario, nombre: cuenta.nombre || '', rol: cuenta.rol, _creado: ts(), _creadoPor: usuarioAuth.uid });
+        });
+      } catch (e) { /* el aviso no se bloquea por la bitácora */ }
+    },
+    // Último kilometraje conocido del vehículo (para quien no ve todo el historial). No bloquea el registro si falla.
+    actualizarOdometro: async function (placa, km, fecha) {
+      var v = D.uno('vehiculos', placa);
+      if (!v || typeof km !== 'number' || km <= (v.odometroUltimo || 0)) return;
+      try { await confirmar([{ tipo: 'modificar', col: 'vehiculos', id: placa, data: { odometroUltimo: km, odometroFecha: fecha || new Date().toISOString() }, resumen: 'Último kilometraje ' + placa + ': ' + km }]); }
+      catch (e) { /* reglas anteriores o sin conexión: el registro principal ya quedó */ }
+    },
     auditoria: async function (limite) {
       var s = await run(function () { return db.collection('auditoria').orderBy('_creado', 'desc').limit(limite || 2000).get({ source: 'server' }); }, 60000);
       var out = []; s.forEach(function (d) { out.push(normDoc(d)); });
@@ -262,7 +292,9 @@
     // ---------- Fotografías (se consultan por demanda) ----------
     fotos: async function (ref, forzar) {
       if (!forzar && cacheFotos[ref]) return cacheFotos[ref].slice();
-      var s = await run(function () { return db.collection('fotos').where('ref', '==', ref).get({ source: 'server' }); }, 60000);
+      var q = db.collection('fotos').where('ref', '==', ref);
+      if (cuenta && cuenta.rol === 'Conductor') q = q.where('_creadoPor', '==', usuarioAuth.uid);
+      var s = await run(function () { return q.get({ source: 'server' }); }, 60000);
       var out = []; s.forEach(function (d) { out.push(normDoc(d)); });
       out.sort(function (a, b) { return (a._creado || 0) - (b._creado || 0); });
       cacheFotos[ref] = out;
@@ -312,7 +344,7 @@
       var b = db.batch(), aud = db.collection('auditoria').doc();
       var cambios = { nombre: datos.nombre, cedula: datos.cedula || '', cargo: datos.cargo || '', rol: datos.rol };
       b.update(db.doc('usuarios/' + u), Object.assign({}, cambios, selloMod()));
-      if (actual.uid) b.update(db.doc('cuentas/' + actual.uid), { rol: datos.rol, nombre: datos.nombre, _mod: ts() });
+      if (actual.uid) b.update(db.doc('cuentas/' + actual.uid), { rol: datos.rol, nombre: datos.nombre, cedula: U.normCedula(datos.cedula), _mod: ts() });
       b.set(aud, { ref: 'usuarios/' + u, coleccion: 'usuarios', docId: u, accion: 'Modificación de usuario', resumen: u + ' — rol ' + datos.rol, cambios: JSON.stringify({ rol: [actual.rol, datos.rol], nombre: [actual.nombre, datos.nombre] }), usuario: cuenta.usuario, nombre: cuenta.nombre || '', rol: cuenta.rol, _creado: ts(), _creadoPor: usuarioAuth.uid });
       await run(function () { return b.commit(); });
     },
@@ -331,37 +363,6 @@
       if (actual.uid) b.update(db.doc('cuentas/' + actual.uid), { activo: !!activo, _mod: ts() });
       b.set(aud, { ref: 'usuarios/' + u, coleccion: 'usuarios', docId: u, accion: activo ? 'Reactivación de usuario' : 'Baja de usuario', resumen: u, cambios: '', usuario: cuenta.usuario, nombre: cuenta.nombre || '', rol: cuenta.rol, _creado: ts(), _creadoPor: usuarioAuth.uid });
       await run(function () { return b.commit(); });
-    },
-
-    // ---------- Instalación inicial ----------
-    instalar: async function (o) {
-      var u = U.normUsuario(o.usuario);
-      if (!/^[a-z0-9._-]{3,30}$/.test(u)) throw err('El usuario debe tener entre 3 y 30 caracteres: letras sin tildes, números, punto o guion.');
-      var cred;
-      try { cred = await run(function () { return auth.createUserWithEmailAndPassword(emailDe(u, 1), String(o.clave)); }); }
-      catch (e) {
-        if (e.code === 'email-already-in-use') throw err('Ese usuario ya fue usado en un intento anterior. Escriba otro usuario.');
-        throw e;
-      }
-      usuarioAuth = cred.user;
-      cuenta = { usuario: u, nombre: o.nombre, rol: 'Administrador', activo: true };
-      var b = db.batch(), aud = db.collection('auditoria').doc(), marcas = {};
-      FL.COLECCIONES.forEach(function (c) { marcas[c] = ts(); });
-      b.set(db.doc('config/instalacion'), { codigo: String(o.codigo || '').trim().toUpperCase(), adminUid: usuarioAuth.uid, usuario: u, fecha: ts() });
-      b.set(db.doc('cuentas/' + usuarioAuth.uid), { usuario: u, nombre: o.nombre, rol: 'Administrador', activo: true, temporalHasta: null, _mod: ts() });
-      b.set(db.doc('usuarios/' + u), Object.assign({ usuario: u, nombre: o.nombre, cedula: U.normCedula(o.cedula), cargo: o.cargo || 'Director de Seguridad Integral', rol: 'Administrador', activo: true, uid: usuarioAuth.uid, version: 1, claveTemporal: false }, selloCrea()));
-      b.set(db.doc('login/' + u), { email: emailDe(u, 1), _mod: ts() });
-      b.set(db.doc('meta/cambios'), marcas);
-      b.set(aud, { ref: 'config/instalacion', coleccion: 'config', docId: 'instalacion', accion: 'Instalación', resumen: 'Instalación inicial de la aplicación y creación del Administrador ' + u, cambios: '', usuario: u, nombre: o.nombre, rol: 'Administrador', _creado: ts(), _creadoPor: usuarioAuth.uid });
-      try { await run(function () { return b.commit(); }); }
-      catch (e) {
-        try { await usuarioAuth.delete(); } catch (x) { /* ignorar */ }
-        await D.salir();
-        if (e.sinPermiso) throw err('Código de instalación incorrecto, o la aplicación ya fue instalada.');
-        throw e;
-      }
-      await cargarSesion();
-      return D.yo();
     }
   });
 
@@ -371,7 +372,7 @@
     var c = cs.data();
     if (c.activo !== true) throw err('Su usuario está de baja o su contraseña fue restablecida. Comuníquese con el Director de Seguridad Integral.');
     if (c.temporalHasta && millis(c.temporalHasta) < Date.now()) throw err('Su contraseña temporal venció. Solicite al Director de Seguridad Integral que la restablezca.');
-    cuenta = { usuario: c.usuario, nombre: c.nombre || c.usuario, rol: c.rol, activo: true, temporalHasta: c.temporalHasta ? millis(c.temporalHasta) : null };
+    cuenta = { usuario: c.usuario, nombre: c.nombre || c.usuario, rol: c.rol, cedula: c.cedula || '', activo: true, temporalHasta: c.temporalHasta ? millis(c.temporalHasta) : null };
   }
 
   // Crea la identidad de acceso en una instancia aparte, para no cerrar la sesión de quien la crea.
@@ -403,7 +404,7 @@
     var perfil = { usuario: u, nombre: datos.nombre, cedula: U.normCedula(datos.cedula), cargo: datos.cargo || '', rol: datos.rol, activo: true, uid: ident.uid, version: ident.version, claveTemporal: true };
     if (uidAnterior) b.update(db.doc('usuarios/' + u), Object.assign(perfil, selloMod()));
     else b.set(db.doc('usuarios/' + u), Object.assign(perfil, selloCrea()));
-    b.set(db.doc('cuentas/' + ident.uid), { usuario: u, nombre: datos.nombre, rol: datos.rol, activo: true, temporalHasta: vence, _mod: ts() });
+    b.set(db.doc('cuentas/' + ident.uid), { usuario: u, nombre: datos.nombre, rol: datos.rol, cedula: U.normCedula(datos.cedula), activo: true, temporalHasta: vence, _mod: ts() });
     if (uidAnterior && uidAnterior !== ident.uid) b.set(db.doc('cuentas/' + uidAnterior), { activo: false, reemplazadaPor: ident.uid, _mod: ts() }, { merge: true });
     b.set(db.doc('login/' + u), { email: emailDe(u, ident.version), _mod: ts() });
     b.set(aud, { ref: 'usuarios/' + u, coleccion: 'usuarios', docId: u, accion: accion, resumen: u + ' — ' + datos.nombre + ' — rol ' + datos.rol, cambios: '', usuario: cuenta.usuario, nombre: cuenta.nombre || '', rol: cuenta.rol, _creado: ts(), _creadoPor: usuarioAuth.uid });

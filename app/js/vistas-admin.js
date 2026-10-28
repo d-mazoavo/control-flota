@@ -63,15 +63,18 @@
   // =================== USUARIOS ===================
   App.ruta('/usuarios', function (cont) {
     var zona = h('div', null, h('p', { class: 'muted' }, 'Cargando usuarios…'));
-    cont.appendChild(V.titulo('Usuarios', 'Cada persona ingresa con su propio usuario y contraseña. Nadie usa correo.', [h('button', { class: 'btn primario', type: 'button', onclick: function () { formUsuario(null); } }, '+ Nuevo usuario')]));
+    cont.appendChild(V.titulo('Usuarios', 'Cada usuario se crea a partir de una persona registrada e ingresa con su propio usuario y contraseña.', [h('button', { class: 'btn primario', type: 'button', onclick: function () { formUsuario(null); } }, '+ Nuevo usuario')]));
     cont.appendChild(h('div', { class: 'tarjeta pila sm' },
       h('p', null, h('strong', null, 'Administrador: '), 'crea, modifica y anula todo; administra usuarios y parámetros.'),
       h('p', null, h('strong', null, 'Analista: '), 'ingresa tanqueos, uso diario, mantenimientos, documentos y fotografías. Consulta todo. No modifica ni anula.'),
-      h('p', null, h('strong', null, 'Gobierno Corporativo: '), 'consulta, filtra y descarga todo, incluida la bitácora. No ingresa, no modifica, no borra.')));
+      h('p', null, h('strong', null, 'Gobierno Corporativo: '), 'consulta, filtra y descarga todo, incluida la bitácora. No ingresa, no modifica, no borra.'),
+      h('p', null, h('strong', null, 'Conductor: '), 'registra solo sus propios tanqueos y usos de vehículos (su cédula queda fija) y sus fotografías; ve únicamente sus registros, sus licencias y los vehículos a su cargo. No ve datos de otras personas.')));
     cont.appendChild(zona);
+    var usuariosActuales = [];
     async function cargar() {
       try {
         var lista = await FL.Datos.usuarios();
+        usuariosActuales = lista;
         U.clear(zona).appendChild(h('section', { class: 'tarjeta' }, UI.tabla({
           nombre: 'Usuarios',
           columnas: [{ l: 'Usuario', v: function (u) { return u.usuario; } }, { l: 'Nombre', v: function (u) { return u.nombre; } }, { l: 'Cédula', v: function (u) { return u.cedula; } }, { l: 'Cargo', v: function (u) { return u.cargo; } },
@@ -105,22 +108,57 @@
         h('div', { class: 'credencial' }, h('div', null, 'Usuario: ', h('strong', null, u)), h('div', null, 'Contraseña temporal: ', h('strong', { class: 'mono' }, clave))),
         h('p', { class: 'muted small' }, 'Dirección de la aplicación: ' + location.href.split('#')[0])), acciones: [{ l: 'Ya la entregué', tipo: 'primario' }] });
     }
+    function sugerirUsuario(nombres) {
+      var p = U.sinTildes(nombres).replace(/[^a-z\s]/g, '').split(/\s+/).filter(Boolean);
+      if (!p.length) return '';
+      var ape = p.length >= 3 ? p[p.length - 2] : p[p.length - 1];
+      var base = (p[0][0] + (p.length > 1 ? ape : '')).slice(0, 24), u = base, n = 2;
+      while (usuariosActuales.some(function (x) { return x.usuario === u; })) u = base + n++;
+      return u;
+    }
+    // El usuario se crea a partir de una persona registrada: nombre, cédula y cargo vienen de su ficha
     function formUsuario(u) {
-      var c = {
-        usuario: h('input', { class: 'campo-input', value: u ? u.usuario : '', disabled: !!u, autocapitalize: 'none' }),
-        nombre: h('input', { class: 'campo-input', value: u ? u.nombre : '' }),
-        cedula: h('input', { class: 'campo-input', value: u ? u.cedula || '' : '', inputmode: 'numeric' }),
-        cargo: h('input', { class: 'campo-input', value: u ? u.cargo || '' : '' }),
-        rol: h('select', { class: 'campo-input' }, FL.OPC.roles.map(function (r) { return h('option', null, r); }))
-      };
-      c.rol.value = u ? u.rol : 'Analista';
-      if (u && u.usuario === FL.Datos.yo().usuario) c.rol.disabled = true;
+      var yo = FL.Datos.yo();
+      var personas = FL.Datos.lista('personas').filter(function (p) { return p.activo !== false; }).sort(function (a, b) { return String(a.nombres).localeCompare(String(b.nombres), 'es'); });
+      var conUsuario = {};
+      usuariosActuales.forEach(function (x) { if (x.activo && x.cedula && (!u || x.usuario !== u.usuario)) conUsuario[x.cedula] = x.usuario; });
+      var cedula = h('input', { class: 'campo-input', list: 'dl-personas-usuario', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Digite la cédula o elija de la lista', value: u ? u.cedula || '' : '', disabled: !!u && !!FL.Datos.uno('personas', u.cedula) });
+      var dl = h('datalist', { id: 'dl-personas-usuario' }, personas.map(function (p) { return h('option', { value: p.cedula }, p.nombres + (p.cargo ? ' — ' + p.cargo : '') + (conUsuario[p.cedula] ? ' (ya tiene usuario)' : '')); }));
+      var ficha = h('div', { class: 'ficha-ref' });
+      var usuario = h('input', { class: 'campo-input', value: u ? u.usuario : '', disabled: !!u, autocapitalize: 'none' });
+      var rol = h('select', { class: 'campo-input' }, FL.OPC.roles.map(function (r) { return h('option', null, r); }));
+      rol.value = u ? u.rol : 'Analista';
+      if (u && u.usuario === yo.usuario) rol.disabled = true;
       var err = h('p', { class: 'txt-error' });
-      function f(l, k, a) { return h('label', { class: 'campo' }, h('span', { class: 'campo-l' }, l), c[k], a ? h('span', { class: 'campo-ayuda' }, a) : null); }
-      UI.modal({ titulo: u ? 'Editar usuario' : 'Nuevo usuario', cuerpo: h('div', { class: 'pila' }, f('Usuario', 'usuario', 'Sin espacios ni tildes. Ejemplo: analista.flota'), f('Nombre completo', 'nombre'), f('Cédula', 'cedula'), f('Cargo', 'cargo'), f('Rol', 'rol'), err),
+      var tocadoUsuario = !!u;
+      usuario.addEventListener('input', function () { tocadoUsuario = true; });
+      function persona() { return FL.Datos.uno('personas', U.normCedula(cedula.value)); }
+      function pintarFicha() {
+        U.clear(ficha);
+        var p = persona();
+        if (!cedula.value) return;
+        if (!p) { ficha.appendChild(h('span', { class: 'txt-error small' }, 'Cédula no registrada. Primero cree la persona en Personas vinculadas.')); return; }
+        ficha.appendChild(h('div', { class: 'ficha' }, h('strong', null, p.nombres), h('span', null, [p.cargo, UI.nombreRazon(p.razonId), p.centroId ? 'C. C. ' + UI.nombreCentro(p.centroId) : ''].filter(Boolean).join(' · ')),
+          h('span', null, p.conductor ? 'Autorizado para conducir · ' + (FL.Calc.textoLicencias(p) || 'sin licencias registradas') : 'No autorizado para conducir'),
+          conUsuario[p.cedula] ? h('span', { class: 'txt-error' }, 'Esta persona ya tiene el usuario activo «' + conUsuario[p.cedula] + '».') : null));
+        if (!tocadoUsuario) usuario.value = sugerirUsuario(p.nombres);
+      }
+      cedula.addEventListener('input', pintarFicha);
+      pintarFicha();
+      function f(l, el, a) { return h('label', { class: 'campo' }, h('span', { class: 'campo-l' }, l), el, a ? h('span', { class: 'campo-ayuda' }, a) : null); }
+      UI.modal({ titulo: u ? 'Editar usuario' : 'Nuevo usuario', cuerpo: h('div', { class: 'pila' },
+        h('div', { class: 'campo' }, h('span', { class: 'campo-l req' }, 'Persona (cédula)'), cedula, dl, ficha, h('span', { class: 'campo-ayuda' }, 'Solo se pueden crear usuarios para personas registradas en Personas vinculadas.')),
+        f('Usuario', usuario, 'Se sugiere a partir del nombre; puede cambiarlo. Sin espacios ni tildes.'),
+        f('Rol', rol, 'Conductor: registra solo sus propios tanqueos y usos de vehículos, y ve solo sus registros.'), err),
         acciones: [{ l: 'Cancelar' }, { l: 'Guardar', tipo: 'primario', fn: async function () {
-          var datos = { usuario: c.usuario.value, nombre: c.nombre.value.trim(), cedula: c.cedula.value, cargo: c.cargo.value.trim(), rol: c.rol.value };
-          if (!datos.nombre) { err.textContent = 'Escriba el nombre.'; return false; }
+          err.textContent = '';
+          var p = persona();
+          if (!p && !(u && !FL.Datos.uno('personas', u.cedula))) { err.textContent = 'Elija una persona registrada.'; return false; }
+          if (p && conUsuario[p.cedula]) { err.textContent = 'Esta persona ya tiene el usuario activo «' + conUsuario[p.cedula] + '».'; return false; }
+          if (rol.value === 'Conductor' && (!p || !p.conductor)) { err.textContent = 'Para el rol Conductor, la persona debe estar marcada como autorizada para conducir en su ficha.'; return false; }
+          if (rol.value === 'Conductor' && p && !FL.Calc.estadoLicencias(p).vigentes.length && !(await UI.confirmar('Licencias', p.nombres + ' no tiene licencias vigentes registradas. ¿Crear el usuario Conductor de todas formas?', 'Crear'))) return false;
+          var datos = p ? { usuario: usuario.value, nombre: p.nombres, cedula: p.cedula, cargo: p.cargo || '', rol: rol.value }
+            : { usuario: u.usuario, nombre: u.nombre, cedula: u.cedula || '', cargo: u.cargo || '', rol: rol.value };
           if (u) { await FL.Datos.editarUsuario(u.usuario, datos); UI.toast('Usuario actualizado.', 'ok'); cargar(); return; }
           var clave = claveTemporal();
           try { await FL.Datos.crearUsuario(datos, clave); } catch (e) { err.textContent = e.message; return false; }
@@ -153,12 +191,25 @@
       inputs[x[0]] = h('input', { type: 'number', class: 'campo-input corto', min: 0, step: 1, value: p[x[0]] != null ? p[x[0]] : x[2] });
       form.appendChild(h('label', { class: 'campo' }, h('span', { class: 'campo-l' }, x[1]), inputs[x[0]]));
     });
+    var TXT = [['emailjsServicio', 'Service ID de EmailJS'], ['emailjsPlantilla', 'Template ID de EmailJS'], ['emailjsClave', 'Public Key de EmailJS'], ['correoCopia', 'Copia oculta de cada aviso (opcional, por ejemplo el correo de la Dirección de Seguridad Integral)']];
+    var correo = h('div', { class: 'pila' }, h('p', { class: 'muted small' }, 'Para que el aviso de cada tanqueo llegue solo al correo de la persona, la aplicación usa EmailJS (servicio externo, con plan gratuito limitado). Si deja estos campos vacíos, el aviso se prepara en el programa de correo del equipo y quien registra oprime «Enviar». El aviso por WhatsApp siempre se prepara para enviarlo con un toque.'));
+    TXT.forEach(function (x) {
+      inputs[x[0]] = h('input', { type: 'text', class: 'campo-input', autocomplete: 'off', spellcheck: 'false', value: p[x[0]] || '' });
+      correo.appendChild(h('label', { class: 'campo' }, h('span', { class: 'campo-l' }, x[1]), inputs[x[0]]));
+    });
+    inputs.correoAutomatico = h('input', { type: 'checkbox', class: 'campo-check' }); inputs.correoAutomatico.checked = p.correoAutomatico !== false;
+    correo.appendChild(h('label', { class: 'campo-bool' }, inputs.correoAutomatico, h('span', null, 'Enviar el correo automáticamente al guardar cada tanqueo')));
     var btn = h('button', { class: 'btn primario', type: 'button', onclick: async function () {
       var o = {}; PARAM.forEach(function (x) { var v = Number(inputs[x[0]].value); o[x[0]] = isFinite(v) && v >= 0 ? v : x[2]; });
+      TXT.forEach(function (x) { o[x[0]] = inputs[x[0]].value.trim(); });
+      o.correoAutomatico = inputs.correoAutomatico.checked;
+      if (o.correoCopia && !FL.Notif.correoValido(o.correoCopia)) { UI.toast('El correo de copia no es válido.', 'error'); return; }
       btn.disabled = true;
       try { await FL.Datos.guardarParametros(o); await App.recargarParametros(); UI.toast('Parámetros guardados.', 'ok'); } catch (e) { UI.toast(e.message, 'error'); } finally { btn.disabled = false; }
     } }, 'Guardar parámetros');
-    cont.appendChild(h('section', { class: 'tarjeta' }, form, h('div', { class: 'form-acciones' }, btn)));
+    cont.appendChild(UI.seccion('Alertas', form));
+    cont.appendChild(UI.seccion('Aviso de tanqueos por correo', correo));
+    cont.appendChild(h('div', { class: 'form-acciones' }, btn));
   }, ['Administrador']);
 
   // =================== BITÁCORA ===================
@@ -187,12 +238,13 @@
     cont.appendChild(V.titulo('Manual de uso', 'Control de Flota y Combustible · Dirección de Seguridad Integral'));
     cont.appendChild(sec('1. Puesta en marcha (Administrador)', [
       'Cree, en este orden: las razones sociales (Configuración › Razones sociales y centros de costo), los centros de costo de cada razón social, las personas vinculadas a la operación (con su cédula, cargo, razón social y centro de costo habitual; marque «Autorizado para conducir» y registre cada categoría de licencia con su propio vencimiento), los vehículos con todos sus datos y sus fotografías de los cuatro ángulos (frente, costado izquierdo, costado derecho y posterior), que quedan en la hoja de vida y en su PDF, y, por último, los usuarios.',
-      'Al crear un usuario, la aplicación genera una contraseña temporal que se muestra una sola vez. Entréguela personalmente; la persona deberá cambiarla en su primer ingreso.'
+      'Los usuarios se crean a partir de las personas registradas: elija la cédula, la aplicación toma el nombre y el cargo y sugiere el usuario. El rol Conductor solo se asigna a personas autorizadas para conducir. Al crear un usuario, la aplicación genera una contraseña temporal que se muestra una sola vez. Entréguela personalmente; la persona deberá cambiarla en su primer ingreso.'
     ]));
     cont.appendChild(sec('2. Tanqueos', [
       'Todo combustible que se tanquee o se retire debe quedar registrado. En «Registrar › Tanqueo» digite la cédula de quien tanquea: el nombre, el cargo, la razón social y el centro de costo se completan solos. Si el combustible va a un vehículo, elija la placa y escriba el kilometraje del odómetro. Si va a otro uso (planta eléctrica, guadaña, bidón, maquinaria), elija «Otro uso», indique el equipo y justifique para qué se lleva, dónde se usará y quién lo autorizó; el centro de costo es obligatorio.',
       'El rendimiento (kilómetros por galón) se calcula entre dos tanqueos a tanque lleno: kilómetros recorridos entre ambos divididos por los galones cargados después del primero. Por eso es importante marcar si se llenó el tanque y escribir el kilometraje exacto. Si un tramo cae por debajo de la referencia menos la tolerancia, la aplicación lo marca como «Bajo» y genera alerta: puede indicar desvío de combustible, fuga, falla mecánica o error de registro.',
-      'Después de guardar, puede adjuntar la foto de la factura o tirilla y del odómetro.'
+      'Después de guardar se prepara el aviso a la persona que tanqueó: al correo registrado (automático si EmailJS está configurado en Parámetros) y por WhatsApp a su celular, con todos los datos del tanqueo, para que confirme o reporte de inmediato si no lo reconoce. Cada aviso queda en la bitácora. También puede adjuntar la foto de la factura o tirilla y del odómetro.',
+      'Los conductores con usuario propio registran sus tanqueos y el uso de los vehículos con su cédula fija; solo ven sus registros, sus licencias y los vehículos a su cargo.'
     ]));
     cont.appendChild(sec('3. Uso diario', [
       'Cuando una persona recibe un vehículo, registre el recibo con su cédula y el kilometraje. Cuando lo devuelva, registre la entrega con el kilometraje final (botón «Entregar» en la lista de vehículos pendientes). Si se diligencia al final del día, marque «Registrar el uso completo de una vez».',

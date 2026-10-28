@@ -17,7 +17,7 @@
     tiposDocumento: ['SOAT', 'Revisión técnico-mecánica (RTM)', 'Póliza todo riesgo', 'Póliza de responsabilidad civil', 'Impuesto vehicular', 'Autorización de blindaje', 'Tarjeta de operación', 'Extintor (recarga)', 'Otro'],
     categoriasLicencia: ['A1', 'A2', 'B1', 'B2', 'B3', 'C1', 'C2', 'C3'],
     digitoPyP: ['Último dígito', 'Primer dígito'],
-    roles: ['Administrador', 'Analista', 'Gobierno Corporativo'],
+    roles: ['Administrador', 'Analista', 'Gobierno Corporativo', 'Conductor'],
     angulos: ['Frente', 'Costado izquierdo', 'Costado derecho', 'Posterior']
   });
 
@@ -50,7 +50,8 @@
         { k: 'cargo', l: 'Cargo', t: 'text', lista: true, ancho: 24 },
         { k: 'razonId', l: 'Razón social', t: 'razon', req: true, lista: true, ancho: 26 },
         { k: 'centroId', l: 'Centro de costo habitual', t: 'centro', lista: true, ancho: 24 },
-        { k: 'telefono', l: 'Teléfono de contacto', t: 'text', inputmode: 'tel' },
+        { k: 'telefono', l: 'Celular (WhatsApp)', t: 'text', inputmode: 'tel', ayuda: '10 dígitos. A este número se envía el aviso de cada tanqueo.' },
+        { k: 'correo', l: 'Correo electrónico', t: 'text', inputmode: 'email', ayuda: 'A este correo se envía el aviso de cada tanqueo.' },
         { k: 'conductor', l: 'Autorizado para conducir vehículos de la compañía', t: 'bool', def: false, lista: true, grupo: 'Conducción' },
         { k: 'licencias', l: 'Licencias de conducción', t: 'licencias', lista: true, ancho: 34, solo: function (r) { return r.conductor; }, ayuda: 'Agregue una línea por cada categoría (A1, A2, B1, C1…), cada una con su propia fecha de vencimiento.' },
         { k: 'activo', l: 'Activa en la operación', t: 'bool', def: true, lista: true, grupo: 'Estado' },

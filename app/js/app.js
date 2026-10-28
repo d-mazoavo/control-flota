@@ -22,14 +22,18 @@
   });
 
   // ---------- Menú por rol ----------
-  var A = 'Administrador', N = 'Analista', G = 'Gobierno Corporativo';
+  var A = 'Administrador', N = 'Analista', G = 'Gobierno Corporativo', K = 'Conductor';
   var MENU = [
     { r: '/tablero', l: 'Tablero', i: '◧', roles: [A, N, G] },
-    { sep: 'Registrar', roles: [A, N] },
-    { r: '/registrar/tanqueo', l: 'Tanqueo', i: '⛽', roles: [A, N] },
-    { r: '/registrar/uso', l: 'Uso diario (recibe / entrega)', i: '⇄', roles: [A, N] },
+    { r: '/tablero', l: 'Inicio', i: '◧', roles: [K] },
+    { sep: 'Registrar', roles: [A, N, K] },
+    { r: '/registrar/tanqueo', l: 'Tanqueo', i: '⛽', roles: [A, N, K] },
+    { r: '/registrar/uso', l: 'Uso diario (recibe / entrega)', i: '⇄', roles: [A, N, K] },
     { r: '/registrar/mantenimiento', l: 'Mantenimiento o arreglo', i: '🔧', roles: [A, N] },
     { r: '/registrar/documento', l: 'Documento (SOAT, RTM, póliza)', i: '📄', roles: [A, N] },
+    { sep: 'Mis registros', roles: [K] },
+    { r: '/tanqueos', l: 'Mis tanqueos', i: '⛽', roles: [K] },
+    { r: '/uso', l: 'Mis usos de vehículos', i: '⇄', roles: [K] },
     { sep: 'Consultar', roles: [A, N, G] },
     { r: '/vehiculos', l: 'Vehículos y hojas de vida', i: '🚙', roles: [A, N, G] },
     { r: '/tanqueos', l: 'Combustible y rendimiento', i: '⛽', roles: [A, N, G] },
@@ -44,7 +48,7 @@
     { r: '/usuarios', l: 'Usuarios', i: '🔑', roles: [A] },
     { r: '/parametros', l: 'Parámetros de alertas', i: '⚙', roles: [A] },
     { r: '/auditoria', l: 'Bitácora de auditoría', i: '🛡', roles: [A, G] },
-    { r: '/ayuda', l: 'Manual de uso', i: '?', roles: [A, N, G] }
+    { r: '/ayuda', l: 'Manual de uso', i: '?', roles: [A, N, G, K] }
   ];
 
   // ---------- Arranque ----------
@@ -67,6 +71,7 @@
 
   async function entrar() {
     if (yo.temporal) return pantallaCambioClave(true);
+    FL.Calc.usarResumen = yo.rol === 'Conductor';   // no ve todo el historial: usa el último kilometraje del vehículo
     var listo = UI.cargando('Cargando datos…');
     try {
       await FL.Datos.cargarCopia();
@@ -123,46 +128,8 @@
       h('p', { class: 'muted' }, (FL.CFG.empresa || 'Avo Pak S.A.S.') + ' · Dirección de Seguridad Integral'),
       form,
       h('p', { class: 'muted small' }, 'Uso exclusivo del personal autorizado. Las actuaciones quedan registradas con usuario, fecha y hora.'),
-      h('p', { class: 'muted small' }, FL.VERSION),
-      h('button', { class: 'enlace small', type: 'button', onclick: pantallaInstalacion }, 'Instalación inicial (solo la primera vez)'))));
+      h('p', { class: 'muted small' }, FL.VERSION))));
     setTimeout(function () { u.focus(); }, 50);
-  }
-
-  function pantallaInstalacion() {
-    var campos = {
-      codigo: h('input', { class: 'campo-input', autocapitalize: 'characters' }),
-      nombre: h('input', { class: 'campo-input', value: '' }),
-      cedula: h('input', { class: 'campo-input', inputmode: 'numeric' }),
-      usuario: h('input', { class: 'campo-input', autocapitalize: 'none' }),
-      clave: h('input', { class: 'campo-input', type: 'password', autocomplete: 'new-password' }),
-      clave2: h('input', { class: 'campo-input', type: 'password', autocomplete: 'new-password' })
-    };
-    var err = h('p', { class: 'txt-error', role: 'alert' });
-    var btn = h('button', { class: 'btn primario ancho', type: 'submit' }, 'Instalar y crear Administrador');
-    function f(l, k, ayuda) { return h('label', { class: 'campo' }, h('span', { class: 'campo-l' }, l), campos[k], ayuda ? h('span', { class: 'campo-ayuda' }, ayuda) : null); }
-    U.clear(raiz).appendChild(h('div', { class: 'pantalla-centro' }, h('div', { class: 'tarjeta acceso' },
-      h('h1', null, 'Instalación inicial'),
-      h('p', { class: 'muted small' }, 'Se hace una sola vez. Crea el usuario Administrador (Director de Seguridad Integral).'),
-      h('form', { class: 'pila', onsubmit: async function (e) {
-        e.preventDefault(); err.textContent = '';
-        var msg = FL.Vistas.reglaClave(campos.clave.value, campos.usuario.value);
-        if (!campos.codigo.value.trim()) msg = 'Escriba el código de instalación (está en LEEME.txt).';
-        else if (!campos.nombre.value.trim()) msg = 'Escriba su nombre completo.';
-        else if (campos.clave.value !== campos.clave2.value) msg = 'Las contraseñas no coinciden.';
-        if (msg) { err.textContent = msg; return; }
-        btn.disabled = true;
-        try {
-          yo = await FL.Datos.instalar({ codigo: campos.codigo.value, nombre: campos.nombre.value.trim(), cedula: campos.cedula.value, usuario: campos.usuario.value, clave: campos.clave.value });
-          UI.toast('Instalación completada.', 'ok');
-          await entrar();
-        } catch (x) { err.textContent = x.message; btn.disabled = false; }
-      } },
-        f('Código de instalación', 'codigo', 'Aparece en LEEME.txt y en el archivo de reglas.'),
-        f('Nombre completo', 'nombre'), f('Cédula', 'cedula'),
-        f('Usuario', 'usuario', 'Sin espacios ni tildes. Ejemplo: dmazo'),
-        f('Contraseña', 'clave', 'Mínimo 10 caracteres, con letras y números.'), f('Repita la contraseña', 'clave2'),
-        err, btn),
-      h('button', { class: 'enlace small', type: 'button', onclick: pantallaIngreso }, '← Volver al ingreso'))));
   }
 
   function pantallaCambioClave(obligatorio) {

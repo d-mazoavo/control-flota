@@ -314,7 +314,7 @@
     });
     barra.appendChild(h('span', { class: 'flex1' }));
     barra.appendChild(contador);
-    if (o.nombre) barra.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: function () { FL.Exportar.excel(o.nombre, [{ nombre: o.nombre, columnas: o.columnas, filas: filtradas() }], descripcionFiltros()); } }, '⬇ Excel'));
+    if (o.nombre && !FL.Datos.esConductor()) barra.appendChild(h('button', { class: 'btn sm', type: 'button', onclick: function () { FL.Exportar.excel(o.nombre, [{ nombre: o.nombre, columnas: o.columnas, filas: filtradas() }], descripcionFiltros()); } }, '⬇ Excel'));
     var cab = h('tr');
     o.columnas.forEach(function (c, i) {
       var th = h('th', { class: (c.tipo === 'num' || c.tipo === 'cop' ? 'num' : ''), scope: 'col' }, h('button', { type: 'button', class: 'th-btn', onclick: function () { if (orden.i === i) orden.desc = !orden.desc; else { orden.i = i; orden.desc = c.tipo === 'num' || c.tipo === 'cop' || c.tipo === 'fecha' || c.tipo === 'fechahora'; } pintar(); } }, c.l, h('span', { class: 'orden' })));

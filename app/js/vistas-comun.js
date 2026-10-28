@@ -121,6 +121,9 @@
           if (r.conductor && !(r.licencias && r.licencias.length)) { f.error('licencias', 'Registre al menos una licencia (categoría y vencimiento) de quien está autorizado para conducir.'); return false; }
           r.licencias = r.conductor ? r.licencias : [];
           r.licenciaCategoria = null; r.licenciaVence = null;   // formato anterior (una sola licencia)
+          if (r.correo && !FL.Notif.correoValido(r.correo)) { f.error('correo', 'Correo no válido.'); return false; }
+          if (r.correo) r.correo = r.correo.trim().toLowerCase();
+          if (r.telefono) { var tel = r.telefono.replace(/\D/g, ''); if (!FL.Notif.celular(tel)) { f.error('telefono', 'Escriba el celular de 10 dígitos (empieza por 3).'); return false; } r.telefono = tel.slice(-10); }
         }
         var resumen = esq.uno + ' ' + (r.placa || r.cedula || r.nombre || r.ciudad || '');
         if (col === 'vehiculos') {

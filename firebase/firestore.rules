@@ -1,0 +1,244 @@
+rules_version = '2';
+
+// =============================================================================
+//  AVO PAK S.A.S. — Control de Flota y Combustible
+//  Reglas de seguridad de la base de datos (Cloud Firestore).
+//
+//  Se publica en la consola de Firebase: Firestore Database > pestaña "Reglas" >
+//  borrar todo > pegar este archivo completo > "Publicar".
+//  (En GitHub: abrir este archivo y usar el botón "Copy raw file".)
+//
+//  Roles:
+//   - Administrador ........ crea, modifica, anula y desactiva todo; administra usuarios.
+//   - Analista ............. solo ingresa registros (tanqueos, uso diario, mantenimientos,
+//                            documentos y fotografías). No modifica ni anula. Puede cerrar
+//                            (entregar) un uso diario que esté abierto.
+//   - Gobierno Corporativo . ve, filtra y descarga todo. No ingresa, no modifica, no borra.
+//   - Conductor ............ registra SOLO sus propios tanqueos y usos diarios (con su
+//                            cédula) y sus fotografías; ve únicamente sus registros, su
+//                            ficha y los datos de los vehículos. No ve datos de otras personas.
+//
+//  Ninguna colección permite borrar registros: el Administrador los ANULA (quedan con
+//  motivo, autor y fecha). Toda escritura exige su asiento en la bitácora de auditoría
+//  dentro de la misma operación, y la hora y el autor los fija el servidor.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Instalación inicial: ya realizada; queda deshabilitada de forma permanente ----------
+
+    // ---------- Identidad y rol ----------
+    function ruta(p) { return /databases/$(database)/documents/$(p); }
+    function autenticado() { return request.auth != null; }
+    function cuenta() { return get(/databases/$(database)/documents/cuentas/$(request.auth.uid)).data; }
+    function activo() {
+      return autenticado()
+        && exists(/databases/$(database)/documents/cuentas/$(request.auth.uid))
+        && cuenta().activo == true
+        && (cuenta().get('temporalHasta', null) == null || cuenta().get('temporalHasta', null) > request.time);
+    }
+    function rol() { return cuenta().rol; }
+    function esAdmin() { return activo() && rol() == 'Administrador'; }
+    function esAnalista() { return activo() && rol() == 'Analista'; }
+    function escritor() { return activo() && (rol() == 'Administrador' || rol() == 'Analista'); }
+    function lector() { return activo() && (rol() == 'Administrador' || rol() == 'Analista' || rol() == 'Gobierno Corporativo'); }
+    function esConductor() { return activo() && rol() == 'Conductor'; }
+    function miCedula() { return cuenta().get('cedula', '-'); }
+    function basico() { return lector() || esConductor(); }          // datos sin información personal de terceros
+    function propio() { return esConductor() && resource.data.cedula == miCedula(); }
+    function ingresa() { return escritor() || esConductor(); }
+
+    // ---------- Instalación inicial ----------
+    function instalando() { return false; }
+
+    // ---------- Sellos de hora y autor (los fija el servidor) ----------
+    function d() { return request.resource.data; }
+    function selloCreacion() {
+      return d()._creado == request.time && d()._creadoPor == request.auth.uid
+        && d()._creadoPorUsuario == cuenta().usuario
+        && d()._mod == request.time && d()._modPor == request.auth.uid
+        && d()._modPorUsuario == cuenta().usuario;
+    }
+    function selloModificacion() {
+      return d()._mod == request.time && d()._modPor == request.auth.uid
+        && d()._modPorUsuario == cuenta().usuario
+        && d()._creado == resource.data._creado && d()._creadoPor == resource.data._creadoPor
+        && d()._creadoPorUsuario == resource.data._creadoPorUsuario;
+    }
+    // Cada escritura avisa en meta/cambios qué colección cambió (sincronización incremental)
+    function marcado(col) { return getAfter(/databases/$(database)/documents/meta/cambios).data.get(col, null) == request.time; }
+    // Cada escritura lleva su asiento de auditoría, nuevo, creado en la misma operación
+    function auditado(col, id) {
+      return d()._aud is string
+        && !exists(/databases/$(database)/documents/auditoria/$(d()._aud))
+        && getAfter(/databases/$(database)/documents/auditoria/$(d()._aud)).data.ref == col + '/' + id;
+    }
+    function crea(col, id) { return selloCreacion() && marcado(col) && auditado(col, id); }
+    function modifica(col, id) { return selloModificacion() && marcado(col) && auditado(col, id); }
+
+    function numOpc(k) { return !(k in d()) || d()[k] == null || d()[k] is number; }
+    function noNeg(k) { return !(k in d()) || d()[k] == null || (d()[k] is number && d()[k] >= 0); }
+
+    // ======================= USUARIOS Y ACCESO =======================
+    match /login/{usuario} {
+      allow get: if true;           // traduce el usuario a su identidad técnica (sin datos personales)
+      allow list: if false;
+      allow create, update: if esAdmin() || instalando();
+      allow delete: if false;
+    }
+    match /cuentas/{uid} {
+      allow get: if autenticado() && (request.auth.uid == uid || esAdmin());
+      allow list: if esAdmin();
+      allow create: if esAdmin() || (instalando() && uid == request.auth.uid && d().rol == 'Administrador' && d().activo == true);
+      allow update: if esAdmin()
+        || (activo() && request.auth.uid == uid
+            && d().diff(resource.data).affectedKeys().hasOnly(['temporalHasta', '_mod'])
+            && d().temporalHasta == null);
+      allow delete: if false;
+    }
+    match /usuarios/{usuario} {
+      allow get: if esAdmin() || (activo() && resource.data.uid == request.auth.uid);
+      allow list: if esAdmin();
+      allow create: if esAdmin() || (instalando() && d().uid == request.auth.uid && d().rol == 'Administrador');
+      allow update: if esAdmin()
+        || (activo() && resource.data.uid == request.auth.uid
+            && d().diff(resource.data).affectedKeys().hasOnly(['claveTemporal', 'claveCambiadaEn', '_mod', '_modPor', '_modPorUsuario'])
+            && d().claveTemporal == false);
+      allow delete: if false;
+    }
+
+    // ======================= CONFIGURACIÓN =======================
+    match /config/instalacion {
+      allow get: if esAdmin();
+      allow create, update, delete: if false;
+    }
+    match /config/parametros {
+      allow get: if basico();
+      allow create, update: if esAdmin() && d()._modPor == request.auth.uid && d()._mod == request.time;
+      allow delete: if false;
+    }
+    match /meta/cambios {
+      allow get: if basico();
+      allow create, update: if ingresa();
+      allow delete: if false;
+    }
+
+    // ======================= AUDITORÍA (inalterable) =======================
+    match /auditoria/{id} {
+      allow read: if activo() && (rol() == 'Administrador' || rol() == 'Gobierno Corporativo');
+      // Las descargas de Gobierno Corporativo también quedan registradas (trazabilidad de datos personales)
+      allow create: if (ingresa() || (lector() && d().accion == 'Exportación'))
+        && d()._creado == request.time && d()._creadoPor == request.auth.uid
+        && d().ref is string && d().accion is string;
+      allow update, delete: if false;
+    }
+
+    // ======================= MAESTROS (solo Administrador) =======================
+    match /razones/{id} {
+      allow read: if basico();
+      allow create: if esAdmin() && crea('razones', id);
+      allow update: if esAdmin() && modifica('razones', id);
+      allow delete: if false;
+    }
+    match /centros/{id} {
+      allow read: if basico();
+      allow create: if esAdmin() && crea('centros', id);
+      allow update: if esAdmin() && modifica('centros', id);
+      allow delete: if false;
+    }
+    match /personas/{cedula} {
+      allow read: if lector() || propio();
+      allow create: if esAdmin() && crea('personas', cedula) && d().cedula == cedula;
+      allow update: if esAdmin() && modifica('personas', cedula) && d().cedula == cedula;
+      allow delete: if false;
+    }
+    match /vehiculos/{placa} {
+      allow read: if basico();
+      allow create: if esAdmin() && crea('vehiculos', placa) && d().placa == placa
+        && noNeg('capacidadTanque') && noNeg('rendimientoRef') && noNeg('odometroInicial');
+      allow update: if (esAdmin() && modifica('vehiculos', placa) && d().placa == placa
+        && noNeg('capacidadTanque') && noNeg('rendimientoRef') && noNeg('odometroInicial'))
+        // Quien registra un tanqueo o uso diario actualiza solo el último kilometraje conocido
+        || (ingresa() && modifica('vehiculos', placa)
+            && d().diff(resource.data).affectedKeys().hasOnly(['odometroUltimo', 'odometroFecha', '_mod', '_modPor', '_modPorUsuario', '_aud'])
+            && d().odometroUltimo is number && d().odometroUltimo >= 0);
+      allow delete: if false;
+    }
+    match /asignaciones/{id} {
+      allow read: if lector();
+      allow create: if esAdmin() && crea('asignaciones', id);
+      allow update: if esAdmin() && modifica('asignaciones', id);
+      allow delete: if false;
+    }
+    match /picoyplaca/{id} {
+      allow read: if basico();
+      allow create: if esAdmin() && crea('picoyplaca', id);
+      allow update: if esAdmin() && modifica('picoyplaca', id);
+      allow delete: if false;
+    }
+
+    // ======================= REGISTROS (Analista ingresa; Administrador modifica o anula) =======================
+    match /tanqueos/{id} {
+      allow read: if lector() || propio();
+      allow create: if (escritor() || (esConductor() && d().cedula == miCedula())) && crea('tanqueos', id) && d().anulado == false
+        && d().galones is number && d().galones > 0 && d().galones < 5000
+        && d().precioGalon is number && d().precioGalon >= 0 && noNeg('odometro');
+      allow update: if esAdmin() && modifica('tanqueos', id)
+        && d().galones is number && d().galones > 0 && d().precioGalon is number && noNeg('odometro');
+      allow delete: if false;
+    }
+    match /mantenimientos/{id} {
+      allow read: if lector();
+      allow create: if escritor() && crea('mantenimientos', id) && d().anulado == false
+        && noNeg('valorTotal') && noNeg('odometro');
+      allow update: if esAdmin() && modifica('mantenimientos', id) && noNeg('valorTotal') && noNeg('odometro');
+      allow delete: if false;
+    }
+    match /documentos/{id} {
+      allow read: if basico();
+      allow create: if escritor() && crea('documentos', id) && d().anulado == false && noNeg('valor');
+      allow update: if esAdmin() && modifica('documentos', id) && noNeg('valor');
+      allow delete: if false;
+    }
+    // Uso diario: el Analista lo abre (recibe el vehículo) y lo cierra (entrega) una sola vez.
+    match /recorridos/{id} {
+      allow read: if lector() || propio();
+      allow create: if (escritor() || (esConductor() && d().cedula == miCedula())) && crea('recorridos', id) && d().anulado == false
+        && d().kmRecibe is number && d().kmRecibe >= 0
+        && (d().estado == 'Abierto' || (d().estado == 'Cerrado' && d().kmEntrega is number && d().kmEntrega >= d().kmRecibe));
+      allow update: if (esAdmin() && modifica('recorridos', id) && d().kmRecibe is number && numOpc('kmEntrega'))
+        || ((esAnalista() || propio()) && modifica('recorridos', id)
+            && resource.data.estado == 'Abierto' && resource.data.anulado == false
+            && d().estado == 'Cerrado'
+            && d().kmEntrega is number && d().kmEntrega >= resource.data.kmRecibe
+            && d().diff(resource.data).affectedKeys().hasOnly([
+                 'estado', 'kmEntrega', 'kmRecorridos', 'fechaEntrega', 'combustibleEntrega',
+                 'novedadesEntrega', 'entregadoA', '_mod', '_modPor', '_modPorUsuario', '_aud']));
+      allow delete: if false;
+    }
+
+    // ======================= FOTOGRAFÍAS =======================
+    // El Conductor solo adjunta soportes a sus propios tanqueos y usos diarios
+    function fotoPropia() {
+      return d().ref is string && d().ref.split('/').size() == 2
+        && d().ref.split('/')[0] in ['tanqueos', 'recorridos']
+        && get(/databases/$(database)/documents/$(d().ref.split('/')[0])/$(d().ref.split('/')[1])).data.cedula == miCedula();
+    }
+    // Se consultan por demanda (no se sincronizan). Máximo ~900 KB por fotografía ya reducida.
+    match /fotos/{id} {
+      allow read: if lector() || (esConductor() && resource.data._creadoPor == request.auth.uid);
+      allow create: if (escritor() || (esConductor() && fotoPropia()))
+        && d()._creado == request.time && d()._creadoPor == request.auth.uid
+        && d()._creadoPorUsuario == cuenta().usuario
+        && d().ref is string && d().data is string && d().data.size() < 900000;
+      allow update: if false;
+      allow delete: if esAdmin();
+    }
+
+    // Todo lo demás queda cerrado.
+    match /{otro=**} {
+      allow read, write: if false;
+    }
+  }
+}
