@@ -86,6 +86,9 @@
       img.src = src;
     });
   }
+  function dimensiones(src) {
+    return new Promise(function (res) { var i = new Image(); i.onload = function () { res({ w: i.naturalWidth || 1, h: i.naturalHeight || 1 }); }; i.onerror = function () { res({ w: 4, h: 3 }); }; i.src = src; });
+  }
   function tabla(doc, o) { return typeof doc.autoTable === 'function' ? doc.autoTable(o) : window.autoTable(doc, o); }
 
   E.hojaDeVida = async function (placa, anio) {
@@ -133,41 +136,71 @@
     titulo('1. Datos del vehículo');
     t2(['Campo', 'Valor'], datos, { columnStyles: { 0: { fontStyle: 'bold', cellWidth: 55 } } });
 
-    titulo('2. Documentos y vigencias (a la fecha de generación)');
+    // 2. Registro fotográfico: última fotografía de cada ángulo
+    var fotos = {};
+    try { fotos = await FL.Datos.ultimasPorTipo('vehiculos/' + v.placa); } catch (e) { fotos = null; }
+    var cw = (W - 2 * M - 6) / 2, ch = 56, fila = ch + 13;
+    if (y + 8 + fila > 262) { doc.addPage(); cab(); y = 30; }
+    titulo('2. Registro fotográfico');
+    if (!fotos || !FL.OPC.angulos.some(function (a) { return fotos[a]; })) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(90);
+      doc.text(fotos ? 'Sin fotografías registradas del vehículo.' : 'No fue posible consultar las fotografías (sin conexión).', M, y + 3); y += 9;
+    } else {
+      for (var i = 0; i < FL.OPC.angulos.length; i++) {
+        if (i % 2 === 0 && i > 0) { y += fila; if (y + fila > 262) { doc.addPage(); cab(); y = 30; } }
+        var a = FL.OPC.angulos[i], f = fotos[a];
+        var x0 = M + (i % 2) * (cw + 6), y0 = y;
+        doc.setDrawColor(200); doc.setLineWidth(0.2); doc.rect(x0, y0, cw, ch);
+        if (f) {
+          var dm = await dimensiones(f.data);
+          var k = Math.min(cw / dm.w, ch / dm.h), iw = dm.w * k, ih = dm.h * k;
+          try { doc.addImage(f.data, 'JPEG', x0 + (cw - iw) / 2, y0 + (ch - ih) / 2, iw, ih); } catch (e) { /* imagen no legible */ }
+        } else {
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(130);
+          doc.text('Sin fotografía', x0 + cw / 2, y0 + ch / 2, { align: 'center' });
+        }
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(30);
+        doc.text(a, x0, y0 + ch + 4.5);
+        if (f) { doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(90); doc.text('Tomada el ' + U.fFechaHora(f._creado) + ' por ' + (f._creadoPorUsuario || '—') + ' · SHA-256 ' + String(f.sha256 || '').slice(0, 20) + '…', x0, y0 + ch + 8.5); }
+      }
+      y += fila + 2;
+    }
+
+    titulo('3. Documentos y vigencias (a la fecha de generación)');
     t2(['Documento', 'Número', 'Entidad', 'Vencimiento', 'Estado'], C.documentosVehiculo(v, d.documentos, p).map(function (x) {
       return [x.tipo, x.doc ? x.doc.numero || '' : '', x.doc ? x.doc.entidad || '' : '', x.doc ? U.fFecha(x.doc.fechaVencimiento) : '', x.estado + (x.doc && x.dias != null ? ' (' + (x.dias < 0 ? 'hace ' + (-x.dias) : x.dias) + ' días)' : '')];
     }));
 
     var r = C.rangoAnio(anio), k = C.costoVehiculo(v, d, r[0], r[1]);
-    titulo('3. Indicadores del año ' + anio);
+    titulo('4. Indicadores del año ' + anio);
     t2(['Combustible', 'Galones', 'Mantenimiento', 'Documentos', 'Costo total', 'Km recorridos', 'Km por galón', 'Costo por km'],
       [[U.cop(k.combustible), U.n(k.galones, 2), U.cop(k.mantenimiento), U.cop(k.documentos), U.cop(k.total), U.n(k.km), k.kmGal ? U.n(k.kmGal, 1) : '—', k.costoKm ? U.cop(k.costoKm) : '—']]);
 
     var rend = C.rendimiento(v, d.tanqueos, p.toleranciaRendimiento);
-    titulo('4. Rendimiento por tramos de tanque lleno (últimos 25)');
+    titulo('5. Rendimiento por tramos de tanque lleno (últimos 25)');
     t2(['Hasta (fecha)', 'Odómetro inicial', 'Odómetro final', 'Km', 'Galones', 'Km/gal', 'Costo/km', 'Estado'], rend.tramos.slice(-25).map(function (x) {
       return [U.fFecha(x.fecha), U.n(x.desde.odometro), U.n(x.hasta.odometro), U.n(x.km), U.n(x.galones, 2), U.n(x.kmGal, 1), U.cop(x.costoKm), x.estado];
     }));
 
-    titulo('5. Tanqueos del año ' + anio);
+    titulo('6. Tanqueos del año ' + anio);
     t2(['Fecha', 'Conductor', 'Galones', 'Precio/gal', 'Valor', 'Odómetro', 'Lleno', 'Estación'], C.vigentes(d.tanqueos).filter(function (x) { return x.placa === v.placa && U.anio(x.fecha) === anio; })
       .sort(function (a, b) { return U.toDate(a.fecha) - U.toDate(b.fecha); }).map(function (x) {
         return [U.fFechaHora(x.fecha), x.personaNombre || x.cedula, U.n(x.galones, 2), U.cop(x.precioGalon), U.cop(x.valorTotal), U.n(x.odometro), x.tanqueLleno === false ? 'No' : 'Sí', x.estacion || ''];
       }));
 
-    titulo('6. Mantenimientos y arreglos (historial completo)');
+    titulo('7. Mantenimientos y arreglos (historial completo)');
     t2(['Fecha', 'Tipo', 'Descripción', 'Taller / técnico', 'Lugar', 'Km', 'Valor'], C.vigentes(d.mantenimientos).filter(function (x) { return x.placa === v.placa; })
       .sort(function (a, b) { return U.toDate(a.fecha) - U.toDate(b.fecha); }).map(function (x) {
         return [U.fFecha(x.fecha), x.tipo, x.descripcion, [x.taller, x.tecnico].filter(Boolean).join(' / '), x.lugar || '', x.odometro != null ? U.n(x.odometro) : '', U.cop(x.valorTotal)];
       }), { columnStyles: { 2: { cellWidth: 55 } } });
 
-    titulo('7. Uso diario del año ' + anio);
+    titulo('8. Uso diario del año ' + anio);
     t2(['Recibe', 'Conductor', 'Km recibe', 'Entrega', 'Km entrega', 'Km', 'Motivo'], C.vigentes(d.recorridos).filter(function (x) { return x.placa === v.placa && U.anio(x.fechaRecibe) === anio; })
       .sort(function (a, b) { return U.toDate(a.fechaRecibe) - U.toDate(b.fechaRecibe); }).map(function (x) {
         return [U.fFechaHora(x.fechaRecibe), x.personaNombre || x.cedula, U.n(x.kmRecibe), x.fechaEntrega ? U.fFechaHora(x.fechaEntrega) : 'Abierto', x.kmEntrega != null ? U.n(x.kmEntrega) : '', x.kmRecorridos != null ? U.n(x.kmRecorridos) : '', x.motivo || ''];
       }));
 
-    titulo('8. Historial de asignación');
+    titulo('9. Historial de asignación');
     t2(['Desde', 'Hasta', 'Responsable', 'Cédula'], C.vigentes(d.asignaciones).filter(function (x) { return x.placa === v.placa; })
       .sort(function (a, b) { return U.toDate(a.desde) - U.toDate(b.desde); }).map(function (x) {
         return [U.fFechaHora(x.desde), x.hasta ? U.fFechaHora(x.hasta) : 'Vigente', x.nombre || '', x.cedula || ''];

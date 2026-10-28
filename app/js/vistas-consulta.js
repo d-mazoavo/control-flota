@@ -172,6 +172,9 @@
           UI.kpi('Km recorridos', U.n(k.km)),
           UI.kpi('Km por galón', k.kmGal ? U.n(k.kmGal, 1) : '—', 'tramos del año'),
           UI.kpi('Costo por km', k.costoKm ? U.cop(k.costoKm) : '—')));
+        panel.appendChild(UI.seccion('Registro fotográfico', h('div', { class: 'pila sm' },
+          V.esAdmin() ? h('p', { class: 'muted small' }, 'Use «Tomar o elegir» en cada ángulo; la fotografía se guarda de inmediato. Las anteriores quedan en la pestaña Fotografías.') : null,
+          V.cuatroAngulos(v.placa, { editable: V.esAdmin(), inmediato: true, alCambiar: function () { var img = document.querySelector('.hv-cab .hv-foto'); var nv = FL.Datos.uno('vehiculos', v.placa); if (img && nv && nv.miniatura && img.tagName === 'IMG') img.src = nv.miniatura; } }).el)));
         panel.appendChild(UI.seccion('Próximo mantenimiento', h('div', { class: 'fila gap wrap' }, UI.chipEstado(mant.estado),
           h('span', null, [mant.km ? U.n(mant.km) + ' km' + (mant.faltaKm != null ? ' (' + (mant.faltaKm <= 0 ? 'excedido en ' + U.n(-mant.faltaKm) : 'faltan ' + U.n(mant.faltaKm)) + ' km)' : '') : '', mant.fecha ? U.fFecha(mant.fecha) : ''].filter(Boolean).join(' · ') || 'Registre el próximo mantenimiento al ingresar un trabajo, o defina el intervalo en los datos del vehículo.'))));
         panel.appendChild(UI.seccion('Vigencias', tablaVigencias(docs)));
@@ -219,11 +222,7 @@
         panel.appendChild(UI.seccion('Fotografías del vehículo', V.galeria('vehiculos/' + v.placa, {
           tipos: ['Frente', 'Costado izquierdo', 'Costado derecho', 'Posterior', 'Interior', 'Odómetro', 'Daño o novedad', 'Documento', 'Otra'],
           principal: async function (f) {
-            var img = new Image(); img.src = f.data; await img.decode();
-            var c = document.createElement('canvas'), k = 320 / Math.max(img.naturalWidth, img.naturalHeight);
-            c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
-            c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-            await FL.Datos.modificar('vehiculos', v.placa, { miniatura: c.toDataURL('image/jpeg', 0.7) }, 'Foto principal ' + v.placa);
+            await V.ponerMiniatura(v.placa, f.data);
             UI.toast('Foto principal actualizada.', 'ok'); App.refrescar();
           }
         })));

@@ -129,6 +129,20 @@
     });
   };
 
+  // Miniatura JPEG (lado mayor "max") a partir de un dataURL
+  U.miniatura = function (dataUrl, max) {
+    return new Promise(function (res, rej) {
+      var img = new Image();
+      img.onerror = function () { rej(new Error('No se pudo leer la imagen.')); };
+      img.onload = function () {
+        var k = Math.min(1, (max || 320) / Math.max(img.naturalWidth, img.naturalHeight));
+        var c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+        var ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
+        res(c.toDataURL('image/jpeg', 0.72));
+      };
+      img.src = dataUrl;
+    });
+  };
   U.debounce = function (fn, ms) { var t; return function () { var a = arguments, s = this; clearTimeout(t); t = setTimeout(function () { fn.apply(s, a); }, ms); }; };
   U.sum = function (arr, f) { return arr.reduce(function (s, x) { var v = f ? f(x) : x; return s + (typeof v === 'number' && isFinite(v) ? v : 0); }, 0); };
   U.agrupar = function (arr, f) { var o = {}; arr.forEach(function (x) { var k = f(x); (o[k] = o[k] || []).push(x); }); return o; };

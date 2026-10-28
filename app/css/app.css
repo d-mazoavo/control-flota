@@ -222,6 +222,17 @@ textarea.campo-input { resize: vertical; }
 .toast.ok { background: var(--ok); } .toast.error { background: var(--deny); }
 .toast.out { opacity: 0; transform: translateY(8px); }
 
+/* ---------- Licencias y registro fotográfico ---------- */
+.licencias { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.lic-filas { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.lic-fila { display: grid; grid-template-columns: 160px 200px max-content; justify-content: start; gap: 8px; align-items: center; }
+.angulos { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.angulo { margin: 0; display: flex; flex-direction: column; gap: 6px; font-size: .84rem; }
+.angulo figcaption { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.angulo-img { aspect-ratio: 4 / 3; border-radius: 10px; overflow: hidden; background: var(--hover); border: 1px solid var(--line); display: grid; place-items: center; }
+.angulo-img.vacia { border-style: dashed; color: var(--muted); font-size: .8rem; }
+.angulo-img img { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; display: block; }
+
 /* ---------- Celular ---------- */
 @media (max-width: 900px) {
   .marco { grid-template-columns: 1fr; }
@@ -244,6 +255,8 @@ textarea.campo-input { resize: vertical; }
   .kpi { padding: 10px 12px; }
   .kpi-v { font-size: 1.1rem; }
   .rejilla { grid-template-columns: 1fr; }
+  .angulos { grid-template-columns: 1fr 1fr; }
+  .lic-fila { grid-template-columns: 1fr 1fr max-content; justify-content: stretch; }
   .tabla-barra .buscar { max-width: none; flex: 1 1 100%; }
 }
 @media (max-width: 600px) { .viz-eje { font-size: 20px; } }

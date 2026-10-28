@@ -59,7 +59,16 @@
     }
     if (col === 'recorridos' && p) {
       if (!p.conductor) { avisos.push(p.nombres + ' NO está autorizado para conducir vehículos de la compañía.'); notas.push('Conductor sin autorización registrada.'); }
-      else if (p.licenciaVence && U.diasHasta(p.licenciaVence) < 0) { avisos.push('La licencia de conducción de ' + p.nombres + ' está VENCIDA desde el ' + U.fFecha(p.licenciaVence) + '.'); notas.push('Licencia de conducción vencida.'); }
+      else {
+        var hab = FL.Calc.habilitado(p, v);
+        if (!FL.Calc.licencias(p).length) { avisos.push(p.nombres + ' no tiene licencias de conducción registradas.'); notas.push('Conductor sin licencia registrada.'); }
+        else if (!hab.ok) {
+          avisos.push(hab.exigidas.length
+            ? p.nombres + ' no tiene vigente ninguna de las categorías que exige este vehículo (' + hab.exigidas.join(', ') + '). Licencias registradas: ' + FL.Calc.textoLicencias(p) + '.'
+            : 'Todas las licencias de ' + p.nombres + ' están VENCIDAS: ' + FL.Calc.textoLicencias(p) + '.');
+          notas.push('Conductor sin licencia vigente para el vehículo.');
+        }
+      }
     }
     if (col === 'recorridos' && v) {
       var pyp = FL.Calc.picoYPlaca(v, r.fechaRecibe, d.picoyplaca);

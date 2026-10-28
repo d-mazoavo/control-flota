@@ -15,6 +15,7 @@
   var cuenta = null;            // cuentas/{uid}: { usuario, nombre, rol, activo, temporalHasta }
   var cache = {};               // copia local por colección: { docs: {id: rec}, cursor: millis }
   var marcador = null;
+  var cacheFotos = {};          // fotografías ya consultadas en esta sesión, por registro
 
   function err(msg, extra) { var e = new Error(msg); if (extra) Object.assign(e, extra); return e; }
   function FV() { return firebase.firestore.FieldValue; }
@@ -175,7 +176,7 @@
     },
     salir: async function () {
       try { if (auth) await auth.signOut(); } catch (e) { /* sin conexión */ }
-      usuarioAuth = null; cuenta = null; cache = {}; marcador = null;
+      usuarioAuth = null; cuenta = null; cache = {}; marcador = null; cacheFotos = {};
       await FL.Store.limpiar();
     },
 
@@ -259,10 +260,19 @@
     },
 
     // ---------- Fotografías (se consultan por demanda) ----------
-    fotos: async function (ref) {
+    fotos: async function (ref, forzar) {
+      if (!forzar && cacheFotos[ref]) return cacheFotos[ref].slice();
       var s = await run(function () { return db.collection('fotos').where('ref', '==', ref).get({ source: 'server' }); }, 60000);
       var out = []; s.forEach(function (d) { out.push(normDoc(d)); });
-      return out.sort(function (a, b) { return (a._creado || 0) - (b._creado || 0); });
+      out.sort(function (a, b) { return (a._creado || 0) - (b._creado || 0); });
+      cacheFotos[ref] = out;
+      return out.slice();
+    },
+    // Última fotografía de cada tipo (por ejemplo, de cada ángulo del vehículo)
+    ultimasPorTipo: async function (ref) {
+      var o = {};
+      (await D.fotos(ref)).forEach(function (f) { o[f.tipo] = f; });
+      return o;
     },
     subirFoto: async function (ref, dataUrl, tipo, descripcion) {
       if (dataUrl.length > 880000) throw err('La fotografía es demasiado pesada incluso reducida. Use una de menor resolución.');
@@ -271,10 +281,12 @@
       b.set(f, { ref: ref, tipo: tipo || 'Fotografía', descripcion: descripcion || '', data: dataUrl, bytes: dataUrl.length, sha256: huella, _creado: ts(), _creadoPor: usuarioAuth.uid, _creadoPorUsuario: cuenta.usuario });
       b.set(aud, { ref: 'fotos/' + f.id, coleccion: 'fotos', docId: f.id, accion: 'Creación', resumen: (tipo || 'Fotografía') + ' de ' + ref + (descripcion ? ' — ' + descripcion : ''), cambios: huella, usuario: cuenta.usuario, nombre: cuenta.nombre || '', rol: cuenta.rol, _creado: ts(), _creadoPor: usuarioAuth.uid });
       await run(function () { return b.commit(); }, 90000);
+      delete cacheFotos[ref];
       return f.id;
     },
     borrarFoto: async function (foto, motivo) {
       var aud = db.collection('auditoria').doc(), b = db.batch();
+      delete cacheFotos[foto.ref];
       b.delete(db.doc('fotos/' + foto.id));
       b.set(aud, { ref: 'fotos/' + foto.id, coleccion: 'fotos', docId: foto.id, accion: 'Eliminación', resumen: 'Fotografía de ' + foto.ref + '. Motivo: ' + motivo, cambios: foto.sha256 || '', usuario: cuenta.usuario, nombre: cuenta.nombre || '', rol: cuenta.rol, _creado: ts(), _creadoPor: usuarioAuth.uid });
       await run(function () { return b.commit(); });

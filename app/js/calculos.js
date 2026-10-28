@@ -234,6 +234,33 @@
     return out;
   };
 
+  // ---------- Licencias de conducción (varias categorías, cada una con su vencimiento) ----------
+  C.licencias = function (p) {
+    if (!p) return [];
+    if (Array.isArray(p.licencias)) return p.licencias.filter(function (l) { return l && l.categoria; });
+    if (p.licenciaCategoria || p.licenciaVence) return [{ categoria: p.licenciaCategoria || 'Sin categoría', vence: p.licenciaVence || null }];  // registros anteriores
+    return [];
+  };
+  C.estadoLicencias = function (p, dias) {
+    var o = { vigentes: [], porVencer: [], vencidas: [] };
+    C.licencias(p).forEach(function (l) {
+      var dd = l.vence ? U.diasHasta(l.vence) : null;
+      if (dd == null || dd < 0) o.vencidas.push(l); else { o.vigentes.push(l); if (dd <= (dias || 30)) o.porVencer.push(l); }
+    });
+    o.estado = !C.licencias(p).length ? 'Sin registro' : !o.vigentes.length ? 'Vencido' : o.vencidas.length ? 'Alguna vencida' : o.porVencer.length ? 'Por vencer' : 'Vigente';
+    return o;
+  };
+  // ¿La persona tiene vigente alguna categoría que habilite para el vehículo?
+  C.habilitado = function (p, v) {
+    var exig = (v && v.categoriasLicencia) || [];
+    var vig = C.estadoLicencias(p).vigentes.map(function (l) { return l.categoria; });
+    if (!exig.length) return { ok: vig.length > 0, exigidas: [], vigentes: vig };
+    return { ok: exig.some(function (c) { return vig.indexOf(c) >= 0; }), exigidas: exig, vigentes: vig };
+  };
+  C.textoLicencias = function (p) {
+    return C.licencias(p).map(function (l) { return l.categoria + (l.vence ? ' (vence ' + U.fFecha(l.vence) + ')' : ' (sin vencimiento)'); }).join('; ');
+  };
+
   // ---------- Alertas ----------
   // nivel: 3 crítico, 2 alto, 1 medio, 0 informativo
   C.alertas = function (d, p) {
@@ -270,10 +297,14 @@
 
     vig(d.personas).forEach(function (x) {
       if (!x.conductor || x.activo === false) return;
-      if (!x.licenciaVence) { out.push({ nivel: 1, tipo: 'Licencia', texto: x.nombres + ' está autorizado para conducir pero no tiene registrado el vencimiento de la licencia.' }); return; }
-      var dd = U.diasHasta(x.licenciaVence);
-      if (dd < 0) out.push({ nivel: 3, tipo: 'Licencia', texto: 'Licencia de conducción de ' + x.nombres + ' vencida desde el ' + U.fFecha(x.licenciaVence) + '. No debe conducir.' });
-      else if (dd <= dias) out.push({ nivel: dd <= diasC ? 2 : 1, tipo: 'Licencia', texto: 'Licencia de conducción de ' + x.nombres + ' vence el ' + U.fFecha(x.licenciaVence) + ' (' + dd + ' día(s)).' });
+      var lic = C.licencias(x);
+      if (!lic.length) { out.push({ nivel: 1, tipo: 'Licencia', texto: x.nombres + ' está autorizado para conducir pero no tiene licencias registradas.' }); return; }
+      lic.forEach(function (l) {
+        if (!l.vence) { out.push({ nivel: 1, tipo: 'Licencia', texto: 'Licencia ' + l.categoria + ' de ' + x.nombres + ' sin fecha de vencimiento registrada.' }); return; }
+        var dd = U.diasHasta(l.vence);
+        if (dd < 0) out.push({ nivel: 3, tipo: 'Licencia', texto: 'Licencia ' + l.categoria + ' de ' + x.nombres + ' vencida desde el ' + U.fFecha(l.vence) + '. No debe conducir vehículos que exijan esa categoría.' });
+        else if (dd <= dias) out.push({ nivel: dd <= diasC ? 2 : 1, tipo: 'Licencia', texto: 'Licencia ' + l.categoria + ' de ' + x.nombres + ' vence el ' + U.fFecha(l.vence) + ' (' + dd + ' día(s)).' });
+      });
     });
 
     var veh = U.porId(d.vehiculos);

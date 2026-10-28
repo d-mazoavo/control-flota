@@ -5,7 +5,7 @@
   var U = FL.U, h = U.h, UI = FL.UI;
   var raiz, principal, yo = null, param = {}, rutas = {}, ultimaSync = 0, sincronizando = false;
   FL.CFG = window.FLOTA_CONFIG || {};
-  FL.VERSION = 'Versión 1 · 27/10/2026';
+  FL.VERSION = 'Versión 1 · actualizada 27/10/2026';
 
   var App = (FL.App = {
     datos: function () {
@@ -62,7 +62,7 @@
     U.clear(raiz).appendChild(h('div', { class: 'pantalla-centro' }, h('div', { class: 'tarjeta acceso' },
       h('img', { src: 'img/logo-informe.png', alt: 'Avo Pak', class: 'logo-acceso' }),
       h('h1', null, 'No fue posible iniciar'), h('p', null, e.message || String(e)),
-      e.config ? h('p', { class: 'muted small' }, 'Siga el paso 4 de LEEME.txt (registrar la app web en Firebase y pegar el bloque en config.js).') : null)));
+      e.config ? h('p', { class: 'muted small' }, 'Siga los pasos 6 y 7 de LEEME.txt: copie solo el bloque «const firebaseConfig = { … };» en config.js, sin las líneas «import» ni «initializeApp».') : null)));
   }
 
   async function entrar() {

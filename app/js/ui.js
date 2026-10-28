@@ -69,7 +69,7 @@
   UI.chip = function (texto, tipo) { return h('span', { class: 'chip ' + (tipo || '') }, texto); };
   UI.chipEstado = function (estado) {
     var m = { 'Vencido': 'mal', 'Por vencer': 'alerta', 'Vigente': 'bien', 'Sin registro': 'alerta', 'Bajo': 'mal', 'Alto': 'alerta', 'Normal': 'bien', 'Sin referencia': '',
-      'Próximo': 'alerta', 'Al día': 'bien', 'Abierto': 'info', 'Cerrado': '', 'Anulado': 'mal', 'Activo': 'bien', 'En mantenimiento': 'alerta', 'Fuera de servicio': 'mal', 'Dado de baja': '' };
+      'Próximo': 'alerta', 'Al día': 'bien', 'Alguna vencida': 'alerta', 'Abierto': 'info', 'Cerrado': '', 'Anulado': 'mal', 'Activo': 'bien', 'En mantenimiento': 'alerta', 'Fuera de servicio': 'mal', 'Dado de baja': '' };
     var iconos = { mal: '✕ ', alerta: '! ', bien: '✓ ' };
     var t = m[estado] || '';
     return UI.chip((iconos[t] || '') + estado, t);
@@ -150,6 +150,9 @@
           FL.Datos.lista('personas').filter(function (p) { return p.activo !== false; }).forEach(function (p) { dl.appendChild(h('option', { value: p.cedula }, p.nombres + (p.cargo ? ' — ' + p.cargo : ''))); });
           extra = h('div', { class: 'ficha-ref' }, dl);
           break;
+        case 'licencias':
+          input = campoLicencias(id, FL.Calc.licencias(Object.assign({}, rec || {}, { licencias: v })));
+          break;
         case 'multi':
           input = h('div', { class: 'multi', id: id });
           (c.opts || []).forEach(function (o) {
@@ -167,11 +170,28 @@
       var err = h('span', { class: 'campo-err' });
       var env = c.t === 'bool'
         ? h('label', { class: 'campo campo-bool ' + (c.t === 'textarea' ? 'ancho' : ''), for: id }, input, h('span', null, c.l, c.ayuda ? h('span', { class: 'campo-ayuda' }, c.ayuda) : null), err)
-        : h('div', { class: 'campo ' + (c.t === 'textarea' || c.t === 'multi' ? 'ancho' : '') }, h('label', { for: id }, lab), input, extra, c.ayuda ? h('span', { class: 'campo-ayuda' }, c.ayuda) : null, err);
+        : h('div', { class: 'campo ' + (c.t === 'textarea' || c.t === 'multi' || c.t === 'licencias' ? 'ancho' : '') }, h('label', { for: id }, lab), input, extra, c.ayuda ? h('span', { class: 'campo-ayuda' }, c.ayuda) : null, err);
       var evento = function () { valores[c.k] = leerCampo(c, input); refrescar(c.k); };
       input.addEventListener('input', evento);
       input.addEventListener('change', evento);
       return { envoltura: env, input: input, extra: extra, lab: lab, err: err, c: c };
+    }
+    // Lista editable de licencias: una línea por categoría con su vencimiento
+    function campoLicencias(id, lista) {
+      var cont = h('div', { class: 'licencias', id: id });
+      var filas = h('div', { class: 'lic-filas' });
+      function fila(l) {
+        var cat = h('select', { class: 'campo-input lic-cat', 'aria-label': 'Categoría' }, h('option', { value: '' }, 'Categoría'));
+        FL.OPC.categoriasLicencia.forEach(function (o) { cat.appendChild(h('option', { value: o }, o)); });
+        cat.value = (l && l.categoria) || '';
+        var ven = h('input', { type: 'date', class: 'campo-input lic-ven', 'aria-label': 'Vencimiento' }); ven.value = (l && l.vence) || '';
+        var f = h('div', { class: 'lic-fila' }, cat, ven, h('button', { type: 'button', class: 'btn xs peligro-t', 'aria-label': 'Quitar licencia', onclick: function () { f.remove(); cont.dispatchEvent(new Event('change')); } }, 'Quitar'));
+        filas.appendChild(f);
+      }
+      (lista.length ? lista : [null]).forEach(fila);
+      cont.appendChild(filas);
+      cont.appendChild(h('button', { type: 'button', class: 'btn xs', onclick: function () { fila(null); cont.dispatchEvent(new Event('change')); } }, '+ Agregar otra categoría'));
+      return cont;
     }
     function porNombre(a, b) { return String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'); }
     function selectOpts(id, lista, v) {
@@ -189,6 +209,7 @@
         case 'number': case 'money': return input.value === '' ? null : Number(input.value);
         case 'bool': return input.checked;
         case 'multi': return Array.from(input.querySelectorAll('input:checked')).map(function (x) { return x.value; });
+        case 'licencias': return Array.from(input.querySelectorAll('.lic-fila')).map(function (f) { return { categoria: f.querySelector('.lic-cat').value, vence: f.querySelector('.lic-ven').value || null }; }).filter(function (l) { return l.categoria || l.vence; });
         case 'persona': return U.normCedula(input.value);
         case 'text': return c.k === 'placa' ? U.normPlaca(input.value) : input.value.trim();
         default: return typeof input.value === 'string' ? input.value.trim() : input.value;
@@ -210,10 +231,13 @@
       if (!ced) return;
       var p = FL.Datos.uno('personas', ced);
       if (!p) { n.extra.appendChild(h('span', { class: 'txt-error small' }, 'Cédula no registrada. El Administrador debe crearla en Personas.')); return; }
-      var lic = '';
-      if (p.conductor && p.licenciaVence) { var dd = U.diasHasta(p.licenciaVence); lic = dd < 0 ? ' · LICENCIA VENCIDA' : ' · Licencia ' + (p.licenciaCategoria || '') + ' vence ' + U.fFecha(p.licenciaVence); }
+      var lic = FL.Calc.licencias(p).map(function (l) {
+        var dd = l.vence ? U.diasHasta(l.vence) : null;
+        return h('span', { class: 'chip ' + (dd == null || dd < 0 ? 'mal' : dd <= (FL.App.param().diasAlerta || 30) ? 'alerta' : 'bien') }, l.categoria + (dd == null ? ' sin vencimiento' : dd < 0 ? ' VENCIDA ' + U.fFecha(l.vence) : ' vence ' + U.fFecha(l.vence)));
+      });
       n.extra.appendChild(h('div', { class: 'ficha ' + (p.activo === false ? 'inactiva' : '') },
-        h('strong', null, p.nombres), h('span', null, [p.cargo, UI.nombreRazon(p.razonId), p.centroId ? 'C. C. ' + UI.nombreCentro(p.centroId) : ''].filter(Boolean).join(' · ') + lic),
+        h('strong', null, p.nombres), h('span', null, [p.cargo, UI.nombreRazon(p.razonId), p.centroId ? 'C. C. ' + UI.nombreCentro(p.centroId) : ''].filter(Boolean).join(' · ')),
+        p.conductor ? (lic.length ? h('span', { class: 'fila gap wrap' }, 'Licencias:', lic) : h('span', { class: 'txt-alerta' }, 'Autorizado para conducir, sin licencias registradas.')) : null,
         p.activo === false ? h('span', { class: 'txt-error' }, 'Persona inactiva en la operación.') : null));
     }
     function fichaVehiculo(n) {
@@ -253,6 +277,14 @@
           if ((c.t === 'number' || c.t === 'money') && v != null && c.min != null && v < c.min) { n.err.textContent = 'Mínimo ' + c.min + '.'; ok = false; }
           if (c.t === 'money' && v != null && v < 0) { n.err.textContent = 'No puede ser negativo.'; ok = false; }
           if (c.t === 'persona' && v && !FL.Datos.uno('personas', v)) { n.err.textContent = 'Cédula no registrada.'; ok = false; }
+          if (c.t === 'licencias') {
+            var cats = {};
+            v.forEach(function (l) {
+              if (!l.categoria || !l.vence) { n.err.textContent = 'Cada licencia necesita la categoría y la fecha de vencimiento.'; ok = false; }
+              else if (cats[l.categoria]) { n.err.textContent = 'La categoría ' + l.categoria + ' está repetida.'; ok = false; }
+              cats[l.categoria] = 1;
+            });
+          }
           out[c.k] = vacio ? (c.t === 'multi' ? [] : null) : v;
         });
         if (!ok) { var e = cont.querySelector('.campo-err:not(:empty)'); if (e) e.closest('.campo').scrollIntoView({ block: 'center', behavior: 'smooth' }); }

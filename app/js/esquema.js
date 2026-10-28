@@ -17,7 +17,8 @@
     tiposDocumento: ['SOAT', 'Revisión técnico-mecánica (RTM)', 'Póliza todo riesgo', 'Póliza de responsabilidad civil', 'Impuesto vehicular', 'Autorización de blindaje', 'Tarjeta de operación', 'Extintor (recarga)', 'Otro'],
     categoriasLicencia: ['A1', 'A2', 'B1', 'B2', 'B3', 'C1', 'C2', 'C3'],
     digitoPyP: ['Último dígito', 'Primer dígito'],
-    roles: ['Administrador', 'Analista', 'Gobierno Corporativo']
+    roles: ['Administrador', 'Analista', 'Gobierno Corporativo'],
+    angulos: ['Frente', 'Costado izquierdo', 'Costado derecho', 'Posterior']
   });
 
   // t: text | textarea | number | money | date | datetime | select | multi | bool | persona | vehiculo | centro | razon
@@ -51,8 +52,7 @@
         { k: 'centroId', l: 'Centro de costo habitual', t: 'centro', lista: true, ancho: 24 },
         { k: 'telefono', l: 'Teléfono de contacto', t: 'text', inputmode: 'tel' },
         { k: 'conductor', l: 'Autorizado para conducir vehículos de la compañía', t: 'bool', def: false, lista: true, grupo: 'Conducción' },
-        { k: 'licenciaCategoria', l: 'Categoría de licencia de conducción', t: 'select', opts: O.categoriasLicencia, solo: function (r) { return r.conductor; } },
-        { k: 'licenciaVence', l: 'Vencimiento de la licencia', t: 'date', lista: true, solo: function (r) { return r.conductor; } },
+        { k: 'licencias', l: 'Licencias de conducción', t: 'licencias', lista: true, ancho: 34, solo: function (r) { return r.conductor; }, ayuda: 'Agregue una línea por cada categoría (A1, A2, B1, C1…), cada una con su propia fecha de vencimiento.' },
         { k: 'activo', l: 'Activa en la operación', t: 'bool', def: true, lista: true, grupo: 'Estado' },
         { k: 'observaciones', l: 'Observaciones', t: 'textarea' }
       ]
@@ -94,6 +94,7 @@
         { k: 'alarma', l: 'Alarma / inmovilizador', t: 'bool', def: false },
         { k: 'otrosDispositivos', l: 'Otros dispositivos de seguridad', t: 'text' },
         { k: 'aplicaPicoPlaca', l: 'Sujeto a pico y placa', t: 'bool', def: true, grupo: 'Restricciones y mantenimiento', ayuda: 'Desmarque si el vehículo está exento (por ejemplo, con permiso especial).' },
+        { k: 'categoriasLicencia', l: 'Categorías de licencia que habilitan para conducirlo', t: 'multi', opts: O.categoriasLicencia, ayuda: 'Al registrar el uso diario se verifica que el conductor tenga vigente al menos una de estas categorías. Si no marca ninguna, basta cualquier licencia vigente.' },
         { k: 'intervaloKm', l: 'Mantenimiento preventivo cada (km)', t: 'number', min: 0, step: 1 },
         { k: 'intervaloMeses', l: 'Mantenimiento preventivo cada (meses)', t: 'number', min: 0, step: 1 },
         { k: 'docsExigidos', l: 'Documentos que se deben mantener vigentes', t: 'multi', opts: O.tiposDocumento, def: ['SOAT', 'Revisión técnico-mecánica (RTM)'], ayuda: 'La aplicación alerta si falta alguno o está por vencer.' },

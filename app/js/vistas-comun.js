@@ -35,6 +35,7 @@
       case 'centro': return v ? (r.centroNombre && c.k === 'centroId' ? r.centroNombre : UI.nombreCentro(v)) : '';
       case 'razon': return v ? UI.nombreRazon(v) : '';
       case 'multi': return Array.isArray(v) ? v.join(', ') : (v || '');
+      case 'licencias': return FL.Calc.textoLicencias(r);
       case 'bool': return v === true ? 'Sí' : v === false ? 'No' : '';
       default: return v;
     }
@@ -103,8 +104,11 @@
   V.editarMaestro = function (col, rec, alGuardar) {
     var esq = FL.ESQ[col], nuevo = !rec;
     var f = UI.formulario(col, rec || null, {});
+    var angulos = col === 'vehiculos' ? V.cuatroAngulos(rec ? rec.placa : null, { editable: true }) : null;
+    var cuerpo = angulos ? h('div', { class: 'pila' }, f.el, h('fieldset', { class: 'grupo' }, h('legend', null, 'Registro fotográfico (4 ángulos)'),
+      h('p', { class: 'muted small' }, 'Frente, costado izquierdo, costado derecho y posterior. Quedan en la hoja de vida y en su PDF; la del frente es la foto principal. En el celular puede tomarlas directamente con la cámara.'), angulos.el)) : f.el;
     UI.modal({
-      titulo: (nuevo ? 'Nuevo ' : 'Editar ') + esq.uno, ancho: true, cuerpo: f.el,
+      titulo: (nuevo ? 'Nuevo ' : 'Editar ') + esq.uno, ancho: true, cuerpo: cuerpo,
       acciones: [{ l: 'Cancelar' }, { l: 'Guardar', tipo: 'primario', fn: async function () {
         var r = f.leer(); if (!r) return false;
         var id = esq.idCampo ? (esq.idCampo === 'placa' ? U.normPlaca(r.placa) : U.normCedula(r.cedula)) : (rec ? rec.id : null);
@@ -113,9 +117,19 @@
           if (!id) { f.error(esq.idCampo, 'Obligatorio.'); return false; }
           if (nuevo && FL.Datos.uno(col, id)) { f.error(esq.idCampo, 'Ya existe un registro con ' + (esq.idCampo === 'placa' ? 'esta placa' : 'esta cédula') + '.'); return false; }
         }
-        if (col === 'personas' && r.conductor && !r.licenciaVence) { f.error('licenciaVence', 'Registre el vencimiento de la licencia de quien está autorizado para conducir.'); return false; }
+        if (col === 'personas') {
+          if (r.conductor && !(r.licencias && r.licencias.length)) { f.error('licencias', 'Registre al menos una licencia (categoría y vencimiento) de quien está autorizado para conducir.'); return false; }
+          r.licencias = r.conductor ? r.licencias : [];
+          r.licenciaCategoria = null; r.licenciaVence = null;   // formato anterior (una sola licencia)
+        }
         var resumen = esq.uno + ' ' + (r.placa || r.cedula || r.nombre || r.ciudad || '');
-        if (col === 'vehiculos') await guardarVehiculo(rec, id, r, resumen);
+        if (col === 'vehiculos') {
+          await guardarVehiculo(rec, id, r, resumen);
+          if (angulos.pendientes()) {
+            try { var n = await angulos.subir(id); UI.toast(n + ' fotografía(s) guardada(s).', 'ok'); }
+            catch (e) { UI.toast('El vehículo quedó guardado, pero no se pudieron subir las fotografías: ' + e.message + ' Súbalas desde la hoja de vida.', 'error'); }
+          }
+        }
         else if (nuevo) await FL.Datos.crear(col, r, id, resumen);
         else await FL.Datos.modificar(col, rec.id, r, resumen);
         UI.toast('Guardado.', 'ok');
@@ -177,6 +191,69 @@
       } }]
     });
   };
+
+  // ---------- Registro fotográfico del vehículo: 4 ángulos ----------
+  // opts: { editable: bool, inmediato: bool (sube al elegir; si no, queda pendiente hasta subir()) , alCambiar() }
+  V.cuatroAngulos = function (placa, opts) {
+    opts = opts || {};
+    var pend = {}, slots = {};
+    var el = h('div', { class: 'angulos' });
+    FL.OPC.angulos.forEach(function (a) {
+      var marco = h('div', { class: 'angulo-img vacia' }, h('span', null, 'Sin fotografía'));
+      var estado = h('span', { class: 'muted small block' });
+      var file = h('input', { type: 'file', accept: 'image/*', class: 'hidden', 'data-angulo': a, onchange: async function () {
+        if (!file.files[0]) return;
+        var listo = UI.cargando('Reduciendo la fotografía…');
+        try {
+          var data = await U.reducirImagen(file.files[0], 1400, 0.72);
+          if (data.length > 880000) data = await U.reducirImagen(file.files[0], 1000, 0.6);
+          if (opts.inmediato) {
+            listo(); listo = UI.cargando('Guardando la fotografía…');
+            await FL.Datos.subirFoto('vehiculos/' + placa, data, a, 'Registro fotográfico');
+            if (a === 'Frente' || !(FL.Datos.uno('vehiculos', placa) || {}).miniatura) await ponerMiniatura(placa, data);
+            mostrar(a, data, 'Guardada ' + U.fFechaHora(new Date()));
+            UI.toast('Fotografía «' + a + '» guardada.', 'ok');
+            if (opts.alCambiar) opts.alCambiar();
+          } else { pend[a] = data; mostrar(a, data, 'Pendiente: se guarda al hacer clic en «Guardar»'); }
+        } catch (e) { UI.toast(e.message, 'error'); } finally { listo(); file.value = ''; }
+      } });
+      var btn = opts.editable ? h('button', { type: 'button', class: 'btn xs', onclick: function () { file.click(); } }, '📷 Tomar o elegir') : null;
+      slots[a] = { marco: marco, estado: estado, btn: btn };
+      el.appendChild(h('figure', { class: 'angulo' }, marco, h('figcaption', null, h('strong', null, a), estado, btn, file)));
+    });
+    function mostrar(a, data, texto) {
+      var s = slots[a];
+      U.clear(s.marco).classList.remove('vacia');
+      s.marco.appendChild(h('img', { src: data, alt: 'Vehículo — ' + a, onclick: function () { UI.modal({ titulo: a, ancho: true, cuerpo: h('img', { src: data, alt: '', class: 'foto-grande' }) }); } }));
+      s.estado.textContent = texto || '';
+      if (s.btn) s.btn.textContent = '📷 Cambiar';
+    }
+    if (placa) FL.Datos.ultimasPorTipo('vehiculos/' + placa).then(function (o) {
+      FL.OPC.angulos.forEach(function (a) { if (o[a] && !pend[a]) mostrar(a, o[a].data, U.fFechaHora(o[a]._creado) + ' · ' + (o[a]._creadoPorUsuario || '')); });
+    }).catch(function () { /* sin conexión: se muestran vacíos */ });
+    return {
+      el: el,
+      pendientes: function () { return Object.keys(pend).length; },
+      // Sube las fotografías pendientes del vehículo ya guardado
+      subir: async function (p) {
+        var lista = FL.OPC.angulos.filter(function (a) { return pend[a]; });
+        if (!lista.length) return 0;
+        var listo = UI.cargando('Guardando ' + lista.length + ' fotografía(s)…'), n = 0;
+        try {
+          for (var i = 0; i < lista.length; i++) { await FL.Datos.subirFoto('vehiculos/' + p, pend[lista[i]], lista[i], 'Registro fotográfico'); n++; }
+          var base = pend['Frente'] || (!(FL.Datos.uno('vehiculos', p) || {}).miniatura ? pend[lista[0]] : null);
+          if (base) await ponerMiniatura(p, base);
+          pend = {};
+        } finally { listo(); }
+        return n;
+      }
+    };
+  };
+  async function ponerMiniatura(placa, data) {
+    var mini = await U.miniatura(data, 320);
+    await FL.Datos.modificar('vehiculos', placa, { miniatura: mini }, 'Foto principal ' + placa);
+  }
+  V.ponerMiniatura = ponerMiniatura;
 
   // ---------- Fotografías ----------
   V.galeria = function (ref, opts) {

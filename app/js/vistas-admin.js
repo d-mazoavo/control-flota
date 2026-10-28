@@ -14,7 +14,14 @@
     cont.appendChild(V.titulo('Personas vinculadas a la operación', 'Al registrar un tanqueo o un uso diario basta digitar la cédula: el resto se completa con estos datos.', [botonNuevoMaestro('personas', '+ Nueva persona')]));
     cont.appendChild(h('p', { class: 'aviso' }, 'Datos personales tratados conforme a la Ley 1581 de 2012 y a la política de tratamiento de la compañía, solo para el control de flota y combustible. Registre únicamente lo necesario.'));
     var cols = V.columnas('personas');
-    cols.push({ l: 'Licencia', v: function (r) { return r.conductor ? (r.licenciaVence ? (U.diasHasta(r.licenciaVence) < 0 ? 'Vencida' : 'Vigente') : 'Sin dato') : ''; }, f: function (r) { if (!r.conductor) return '—'; if (!r.licenciaVence) return UI.chip('Sin dato', 'alerta'); var dd = U.diasHasta(r.licenciaVence); return UI.chipEstado(dd < 0 ? 'Vencido' : dd <= (App.param().diasAlerta || 30) ? 'Por vencer' : 'Vigente'); } });
+    var ilic = cols.findIndex(function (c) { return c.l === 'Licencias de conducción'; });
+    if (ilic >= 0) cols[ilic].f = function (r) {
+      if (!r.conductor) return '—';
+      var l = FL.Calc.licencias(r);
+      if (!l.length) return UI.chip('Sin licencias', 'alerta');
+      return h('span', { class: 'fila gap wrap' }, l.map(function (x) { var dd = x.vence ? U.diasHasta(x.vence) : null; return UI.chip(x.categoria + ' · ' + (x.vence ? U.fFecha(x.vence) : 'sin fecha'), dd == null || dd < 0 ? 'mal' : dd <= (App.param().diasAlerta || 30) ? 'alerta' : 'bien'); }));
+    };
+    cols.push({ l: 'Estado de licencias', v: function (r) { return r.conductor ? FL.Calc.estadoLicencias(r, App.param().diasAlerta).estado : ''; }, f: function (r) { return r.conductor ? UI.chipEstado(FL.Calc.estadoLicencias(r, App.param().diasAlerta).estado) : '—'; } });
     cont.appendChild(h('section', { class: 'tarjeta' }, UI.tabla({
       nombre: 'Personas', columnas: cols, filas: function () { return FL.Datos.lista('personas'); }, ordenInicial: 1, ordenDesc: false,
       filtros: [filtroActivo, { l: 'Conductores', opts: [['1', 'Solo autorizados para conducir']], fn: function (r) { return !!r.conductor; } },
@@ -179,7 +186,7 @@
     function sec(t, parrafos) { return UI.seccion(t, h('div', { class: 'pila sm texto' }, parrafos.map(function (p) { return h('p', null, p); }))); }
     cont.appendChild(V.titulo('Manual de uso', 'Control de Flota y Combustible · Dirección de Seguridad Integral'));
     cont.appendChild(sec('1. Puesta en marcha (Administrador)', [
-      'Cree, en este orden: las razones sociales (Configuración › Razones sociales y centros de costo), los centros de costo de cada razón social, las personas vinculadas a la operación (con su cédula, cargo, razón social y centro de costo habitual; marque «Autorizado para conducir» y registre el vencimiento de la licencia de quienes conducen), los vehículos con todos sus datos y, por último, los usuarios.',
+      'Cree, en este orden: las razones sociales (Configuración › Razones sociales y centros de costo), los centros de costo de cada razón social, las personas vinculadas a la operación (con su cédula, cargo, razón social y centro de costo habitual; marque «Autorizado para conducir» y registre cada categoría de licencia con su propio vencimiento), los vehículos con todos sus datos y sus fotografías de los cuatro ángulos (frente, costado izquierdo, costado derecho y posterior), que quedan en la hoja de vida y en su PDF, y, por último, los usuarios.',
       'Al crear un usuario, la aplicación genera una contraseña temporal que se muestra una sola vez. Entréguela personalmente; la persona deberá cambiarla en su primer ingreso.'
     ]));
     cont.appendChild(sec('2. Tanqueos', [
@@ -189,7 +196,7 @@
     ]));
     cont.appendChild(sec('3. Uso diario', [
       'Cuando una persona recibe un vehículo, registre el recibo con su cédula y el kilometraje. Cuando lo devuelva, registre la entrega con el kilometraje final (botón «Entregar» en la lista de vehículos pendientes). Si se diligencia al final del día, marque «Registrar el uso completo de una vez».',
-      'La aplicación advierte si el conductor no está autorizado o tiene la licencia vencida, si el vehículo tiene pico y placa, si ya había un uso abierto y si hay kilómetros sin registrar entre la entrega anterior y el nuevo recibo. Si se confirma el registro pese a la advertencia, queda una nota visible en los reportes.'
+      'La aplicación advierte si el conductor no está autorizado o no tiene vigente ninguna de las categorías de licencia que exige el vehículo, si el vehículo tiene pico y placa, si ya había un uso abierto y si hay kilómetros sin registrar entre la entrega anterior y el nuevo recibo. Si se confirma el registro pese a la advertencia, queda una nota visible en los reportes.'
     ]));
     cont.appendChild(sec('4. Mantenimientos y documentos', [
       'Registre cada mantenimiento o arreglo con el taller, el técnico, el lugar, el kilometraje y el valor, y si aplica, el próximo mantenimiento (por kilómetros o por fecha). También puede definir en los datos del vehículo un intervalo de mantenimiento preventivo.',
