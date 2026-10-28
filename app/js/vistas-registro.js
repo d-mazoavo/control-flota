@@ -188,8 +188,9 @@
     cont.appendChild(UI.seccion('Vehículos en uso pendientes de entrega', UI.tabla({
       columnas: [{ l: 'Vehículo', v: function (r) { return r.placa; } }, { l: 'Conductor', v: function (r) { return r.personaNombre; } }, { l: 'Recibió', v: function (r) { return r.fechaRecibe; }, tipo: 'fechahora' }, { l: 'Km al recibir', v: function (r) { return r.kmRecibe; }, tipo: 'num' }, { l: 'Motivo', v: function (r) { return r.motivo; } }],
       filas: abiertos, vacio: 'No hay vehículos pendientes de entrega.',
-      acciones: function (r) { return h('button', { class: 'btn xs primario', type: 'button', onclick: function () { V.registrarEntrega(r); } }, 'Registrar entrega'); }
+      acciones: function (r) { return V.accionesRegistro('recorridos', r, [h('button', { class: 'btn xs primario', type: 'button', onclick: function () { V.registrarEntrega(r); } }, 'Registrar entrega'), V.botonArchivos('recorridos', r)]); }
     })));
+    cont.appendChild(ultimos('recorridos', function (r) { return r.fechaRecibe; }, [{ l: 'Vehículo', v: function (r) { return r.placa; } }, { l: 'Conductor', v: function (r) { return r.personaNombre; } }, { l: 'Recibió', v: function (r) { return r.fechaRecibe; }, tipo: 'fechahora' }, { l: 'Km', v: function (r) { return r.kmRecorridos; }, tipo: 'num' }, { l: 'Estado', v: function (r) { return r.estado; } }]));
   }, [A, N, K]);
 
   V.registrarEntrega = function (r) {
@@ -221,6 +222,7 @@
       return FL.Datos.lista(col).filter(function (r) { return r._creadoPorUsuario === yo.usuario; })
         .sort(function (a, b) { return (b._creado || 0) - (a._creado || 0); }).slice(0, 10);
     };
-    return UI.seccion('Mis últimos registros', UI.tabla({ columnas: columnas, filas: filas, vacio: 'Aún no ha registrado información.' }));
+    return UI.seccion('Mis últimos registros', UI.tabla({ columnas: columnas, filas: filas, vacio: 'Aún no ha registrado información.',
+      acciones: function (r) { return V.accionesRegistro(col, r, [V.botonArchivos(col, r)]); } }));
   }
 })();

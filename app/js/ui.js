@@ -125,6 +125,8 @@
 
     function construir(c) {
       var id = 'f-' + col + '-' + c.k;
+      // Si la pantalla ya tiene un formulario igual (por ejemplo, al editar desde «Mis últimos registros»), se usa otro identificador
+      if (document.getElementById(id)) { var sfx = 2; while (document.getElementById(id + '-' + sfx)) sfx++; id = id + '-' + sfx; }
       var v = valores[c.k];
       var input, extra = null;
       var bloqueado = (!nuevo && c.fijo) || (opts.soloLectura && opts.soloLectura.indexOf(c.k) >= 0) || c.calc;

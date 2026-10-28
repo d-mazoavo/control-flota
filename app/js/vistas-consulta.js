@@ -53,7 +53,7 @@
     var ult = C.vigentes(d.tanqueos).sort(function (a, b) { return U.toDate(b.fecha) - U.toDate(a.fecha); }).slice(0, 5);
     cont.appendChild(UI.seccion('Mis últimos tanqueos', UI.tabla({
       columnas: [{ l: 'Fecha', v: function (r) { return r.fecha; }, tipo: 'fechahora' }, { l: 'Destino', v: function (r) { return r.placa || r.equipo; } }, { l: 'Galones', v: function (r) { return r.galones; }, tipo: 'num', dec: 2 }, { l: 'Valor', v: function (r) { return r.valorTotal; }, tipo: 'cop' }, { l: 'Registró', v: function (r) { return r._creadoPorUsuario; } }],
-      filas: ult, vacio: 'Aún no tiene tanqueos registrados.'
+      filas: ult, vacio: 'Aún no tiene tanqueos registrados.', acciones: function (r) { return V.botonArchivos('tanqueos', r); }
     })));
   }
 
@@ -215,7 +215,7 @@
           V.cuatroAngulos(v.placa, { editable: V.esAdmin(), inmediato: true, alCambiar: function () { var img = document.querySelector('.hv-cab .hv-foto'); var nv = FL.Datos.uno('vehiculos', v.placa); if (img && nv && nv.miniatura && img.tagName === 'IMG') img.src = nv.miniatura; } }).el)));
         panel.appendChild(UI.seccion('Próximo mantenimiento', h('div', { class: 'fila gap wrap' }, UI.chipEstado(mant.estado),
           h('span', null, [mant.km ? U.n(mant.km) + ' km' + (mant.faltaKm != null ? ' (' + (mant.faltaKm <= 0 ? 'excedido en ' + U.n(-mant.faltaKm) : 'faltan ' + U.n(mant.faltaKm)) + ' km)' : '') : '', mant.fecha ? U.fFecha(mant.fecha) : ''].filter(Boolean).join(' · ') || 'Registre el próximo mantenimiento al ingresar un trabajo, o defina el intervalo en los datos del vehículo.'))));
-        panel.appendChild(UI.seccion('Vigencias', tablaVigencias(docs)));
+        panel.appendChild(UI.seccion('Vigencias', tablaVigencias(docs, v.placa)));
         var tr = rend.tramos.slice(-30);
         if (tr.length >= 2) panel.appendChild(h('section', { class: 'tarjeta' }, FL.Viz.linea({
           titulo: 'Rendimiento por tramo de tanque lleno (km por galón)', color: 'var(--s1)', unidad: 'km/gal', referencia: rend.referencia,
@@ -244,7 +244,7 @@
       } else if (pestanaHV === 'mant') {
         panel.appendChild(UI.seccion('Mantenimientos y arreglos', tablaMant(function () { return FL.Datos.lista('mantenimientos').filter(function (x) { return x.placa === v.placa; }); })));
       } else if (pestanaHV === 'docs') {
-        panel.appendChild(UI.seccion('Vigencias actuales', tablaVigencias(docs)));
+        panel.appendChild(UI.seccion('Vigencias actuales', tablaVigencias(docs, v.placa)));
         panel.appendChild(UI.seccion('Historial de documentos', tablaDocs(function () { return FL.Datos.lista('documentos').filter(function (x) { return x.placa === v.placa; }); })));
       } else if (pestanaHV === 'asig') {
         panel.appendChild(UI.seccion('Historial de asignación del vehículo', UI.tabla({
@@ -270,8 +270,10 @@
     pintar();
   }, TODOS);
 
-  function tablaVigencias(docs) {
+  function tablaVigencias(docs, placa) {
+    docs.forEach(function (x) { x.placa = x.placa || placa; });
     return UI.tabla({
+      acciones: accionesVigencia,
       columnas: [{ l: 'Documento', v: function (x) { return x.tipo + (x.exigido ? '' : ' (no exigido)'); } }, { l: 'Número', v: function (x) { return x.doc ? x.doc.numero : ''; } }, { l: 'Entidad', v: function (x) { return x.doc ? x.doc.entidad : ''; } },
         { l: 'Vence', v: function (x) { return x.doc ? x.doc.fechaVencimiento : null; }, tipo: 'fecha' }, { l: 'Días', v: function (x) { return x.dias; }, tipo: 'num' }, { l: 'Estado', v: function (x) { return x.estado; }, f: function (x) { return UI.chipEstado(x.estado); } }],
       filas: docs, vacio: 'Defina en los datos del vehículo qué documentos se deben mantener vigentes.'
@@ -376,6 +378,26 @@
     mantenimientos: ['Factura', 'Cotización', 'Antes del trabajo', 'Después del trabajo', 'Garantía', 'Otro soporte'],
     documentos: ['Documento escaneado', 'Foto del documento', 'Comprobante de pago', 'Otro soporte']
   };
+  V.verArchivos = function (col, r) { verSoportes(col, r); };
+  V.botonArchivos = function (col, r) { return h('button', { class: 'btn xs', type: 'button', onclick: function () { verSoportes(col, r); } }, '📎 Archivos'); };
+  // Registrar un documento faltante desde la tabla de vigencias (vehículo y tipo ya diligenciados)
+  V.nuevoDocumento = function (placa, tipo) {
+    var esOtro = FL.OPC.tiposDocumento.indexOf(tipo) < 0;
+    var f = UI.formulario('documentos', { placa: placa, tipo: esOtro ? 'Otro' : tipo, otroTipo: esOtro ? String(tipo).replace(/^Otro: /, '') : null });
+    UI.modal({ titulo: 'Registrar ' + tipo + ' · ' + placa, ancho: true, cuerpo: f.el,
+      acciones: [{ l: 'Cancelar' }, { l: 'Guardar', tipo: 'primario', fn: async function () {
+        var r = f.leer(); if (!r) return false;
+        if (r.fechaInicio && r.fechaVencimiento && r.fechaVencimiento < r.fechaInicio) { f.error('fechaVencimiento', 'El vencimiento no puede ser anterior al inicio de la vigencia.'); return false; }
+        var id = await FL.Datos.crear('documentos', V.completar('documentos', r), null, 'documento ' + r.placa + ' ' + r.tipo);
+        UI.toast('Documento registrado.', 'ok'); App.refrescar();
+        V.ofrecerSoporte('documentos/' + id, 'Archivos del documento', ['Documento escaneado', 'Foto del documento', 'Comprobante de pago', 'Otro soporte']);
+      } }] });
+  };
+  function accionesVigencia(x) {
+    if (x.doc) return V.accionesRegistro('documentos', x.doc, [V.botonArchivos('documentos', x.doc)]);
+    if (V.puedeIngresar() && !FL.Datos.esConductor()) return h('button', { class: 'btn xs primario', type: 'button', onclick: function () { V.nuevoDocumento(x.placa, x.tipo); } }, '+ Registrar');
+    return null;
+  }
   function verSoportes(col, r) {
     UI.modal({ titulo: 'Archivos · ' + FL.ESQ[col].uno + ' ' + (r.placa || r.equipo || ''), ancho: true, cuerpo: h('div', { class: 'pila' },
       r.advertencias ? h('p', { class: 'aviso' }, 'Nota registrada: ' + r.advertencias) : null,
@@ -427,7 +449,7 @@
       columnas: [{ l: 'Placa', v: function (x) { return x.placa; } }, { l: 'Documento', v: function (x) { return x.tipo; } }, { l: 'Exigido', v: function (x) { return x.exigido; } }, { l: 'Número', v: function (x) { return x.doc ? x.doc.numero : ''; } },
         { l: 'Entidad', v: function (x) { return x.doc ? x.doc.entidad : ''; } }, { l: 'Vence', v: function (x) { return x.doc ? x.doc.fechaVencimiento : null; }, tipo: 'fecha' }, { l: 'Días', v: function (x) { return x.dias; }, tipo: 'num' },
         { l: 'Estado', v: function (x) { return x.estado; }, f: function (x) { return UI.chipEstado(x.estado); } }],
-      filas: filas, ordenInicial: 6, ordenDesc: false,
+      filas: filas, ordenInicial: 6, ordenDesc: false, acciones: accionesVigencia,
       filtros: [{ l: 'Estado', opts: [['Vencido', 'Vencidos'], ['Por vencer', 'Por vencer'], ['Sin registro', 'Sin registro'], ['Vigente', 'Vigentes']], fn: function (r, v) { return r.estado === v; } }, { l: 'Documento', opts: FL.OPC.tiposDocumento.map(function (t) { return [t, t]; }), fn: function (r, v) { return r.tipo === v; } }],
       alAbrir: function (x) { pestanaHV = 'docs'; App.ir('/vehiculo/' + encodeURIComponent(x.placa)); }
     })));
